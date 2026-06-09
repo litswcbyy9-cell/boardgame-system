@@ -13,19 +13,59 @@ const app = express();
 const scryptAsync = promisify(crypto.scrypt);
 const SESSION_DAYS = 7;
 const RESERVATION_GRACE_MINUTES = Math.max(1, Math.min(180, Number(process.env.RESERVATION_GRACE_MINUTES || 15)));
+const PUBLIC_REGISTER_ENABLED = process.env.ALLOW_PUBLIC_REGISTER === '1';
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const SENSITIVE_KEYS = new Set(['password', 'token', 'authorization', 'password_hash', 'passwordHash']);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let expiringReservations = false;
 
+function corsOptions() {
+  const originList = String(process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (originList.length) return { origin: originList, credentials: true };
+  if (process.env.NODE_ENV === 'production') return { origin: false };
+  return {};
+}
+
 // 中间件
-app.use(cors());
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(cors(corsOptions()));
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 app.use(express.json());
+
+app.use((req, _res, next) => {
+  if (req.url === '/api/v1' || req.url.startsWith('/api/v1/')) {
+    req.url = req.url.replace(/^\/api\/v1(?=\/|$)/, '/api');
+  }
+  next();
+});
 
 // 请求日志中间件
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'http_request',
+      at: new Date().toISOString(),
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs: duration,
+    }));
   });
   next();
 });
@@ -135,6 +175,7 @@ function requireAdmin(req, res, next) {
 }
 
 app.use(attachAuth);
+app.use(auditSuccessfulWrites);
 
 async function callReserve(tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd) {
   const conn = await pool.getConnection();
@@ -292,6 +333,7 @@ const ERROR_MESSAGES = {
     invalid_username: '账号只能包含字母、数字和下划线，长度 3-32 位',
     weak_password: '密码至少 6 位',
     username_exists: '账号已存在，请换一个账号名',
+    registration_disabled: '公开注册已关闭，请由管理员在员工管理中创建账号',
     invalid_credentials: '账号或密码错误',
     unauthorized: '请先登录后再操作',
     forbidden: '当前账号没有执行该操作的权限',
@@ -337,6 +379,92 @@ function sendError(res, status, code, fallback) {
   return res.status(status).json({ error: code, message, description: message });
 }
 
+function canonicalApiPath(req) {
+  return String(req.originalUrl || req.url || '')
+    .split('?')[0]
+    .replace(/^\/api\/v1(?=\/|$)/, '/api');
+}
+
+function auditResourceType(pathname) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts[1] === 'public') return parts[2] || 'public';
+  return parts[1] || 'unknown';
+}
+
+function auditResourceId(pathname) {
+  const parts = pathname.split('/').filter(Boolean).slice(2);
+  return parts.find((part) => /^\d+$/.test(part)) || null;
+}
+
+function sanitizedPayload(value, depth = 0) {
+  if (value == null || depth > 4) return value == null ? null : '[truncated]';
+  if (Array.isArray(value)) return value.slice(0, 30).map((item) => sanitizedPayload(item, depth + 1));
+  if (typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, 80)
+      .map(([key, item]) => {
+        if (SENSITIVE_KEYS.has(key) || /password|token|secret|credential/i.test(key)) {
+          return [key, '[redacted]'];
+        }
+        return [key, sanitizedPayload(item, depth + 1)];
+      })
+  );
+}
+
+function requestBodyJson(req) {
+  if (!req.body || Object.keys(req.body).length === 0) return null;
+  const json = JSON.stringify(sanitizedPayload(req.body));
+  return json.length > 8000 ? JSON.stringify({ truncated: true }) : json;
+}
+
+function clientIp(req) {
+  const forwarded = String(req.get('x-forwarded-for') || '').split(',')[0].trim();
+  return forwarded || req.ip || req.socket?.remoteAddress || null;
+}
+
+async function writeAuditLog(req, res) {
+  const pathname = canonicalApiPath(req);
+  await pool.query(
+    `INSERT INTO audit_logs
+      (user_id, action, resource_type, resource_id, request_method, request_path,
+       status_code, ip, user_agent, request_body_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      req.user?.id || null,
+      `${req.method} ${pathname}`,
+      auditResourceType(pathname),
+      auditResourceId(pathname),
+      req.method,
+      pathname,
+      res.statusCode,
+      clientIp(req),
+      String(req.get('user-agent') || '').slice(0, 255) || null,
+      requestBodyJson(req),
+    ]
+  );
+}
+
+function auditSuccessfulWrites(req, res, next) {
+  if (!WRITE_METHODS.has(req.method) || !canonicalApiPath(req).startsWith('/api/')) {
+    return next();
+  }
+  res.on('finish', () => {
+    if (res.statusCode >= 200 && res.statusCode < 400) {
+      writeAuditLog(req, res).catch((error) => {
+        console.error(JSON.stringify({
+          level: 'warn',
+          event: 'audit_log_failed',
+          at: new Date().toISOString(),
+          requestId: req.requestId,
+          message: error.message,
+        }));
+      });
+    }
+  });
+  next();
+}
+
 function reservationErrorMessage(code) {
   return errorMessage(code, '预约失败，请检查桌位、人数和时间后重试');
 }
@@ -354,6 +482,10 @@ async function recommendTableForReservation(partySize, reservedStart, reservedEn
 }
 
 app.post('/api/auth/register', async (req, res) => {
+  if (!PUBLIC_REGISTER_ENABLED) {
+    return sendError(res, 403, 'registration_disabled');
+  }
+
   const { username, password, displayName } = req.body || {};
   const normalizedUsername = String(username || '').trim().toLowerCase();
   const normalizedDisplayName = String(displayName || username || '').trim();

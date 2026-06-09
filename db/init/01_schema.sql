@@ -14,6 +14,7 @@ DROP TABLE IF EXISTS players;
 DROP TABLE IF EXISTS game_tables;
 DROP TABLE IF EXISTS games;
 DROP TABLE IF EXISTS venues;
+DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS auth_sessions;
 DROP TABLE IF EXISTS app_users;
 DROP TABLE IF EXISTS staff_profiles;
@@ -72,6 +73,27 @@ CREATE TABLE auth_sessions (
   KEY ix_auth_sessions_expires (expires_at),
   CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES app_users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB COMMENT='后台登录会话';
+
+CREATE TABLE audit_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tenant_id INT UNSIGNED NULL COMMENT '预留多租户编号',
+  user_id INT UNSIGNED NULL,
+  action VARCHAR(120) NOT NULL,
+  resource_type VARCHAR(64) NOT NULL,
+  resource_id VARCHAR(64) NULL,
+  request_method VARCHAR(10) NOT NULL,
+  request_path VARCHAR(255) NOT NULL,
+  status_code SMALLINT UNSIGNED NOT NULL,
+  ip VARCHAR(64) NULL,
+  user_agent VARCHAR(255) NULL,
+  request_body_json JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY ix_audit_created (created_at),
+  KEY ix_audit_user_created (user_id, created_at),
+  KEY ix_audit_resource (resource_type, resource_id, created_at),
+  CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES app_users (id) ON DELETE SET NULL
+) ENGINE=InnoDB COMMENT='操作审计日志';
 
 CREATE TABLE games (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,

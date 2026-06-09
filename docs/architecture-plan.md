@@ -535,10 +535,10 @@ CI/CD:
 - [ ] NestJS 项目初始化 + 单体模块化 (monorepo with shared libs)
 - [ ] 多租户数据库改造 (tenant_id + 行级安全)
 - [ ] JWT + RBAC 认证授权
-- [ ] API 版本化 (`/api/v1/...`)
+- [x] API 版本化 (`/api/v1/...`)
 - [ ] 请求校验 (class-validator + DTO)
-- [ ] 结构化日志 (Winston)
-- [ ] 操作审计日志
+- [x] 结构化日志 (JSON access logs，后续可接 Winston/Pino)
+- [x] 操作审计日志
 - [ ] Docker Compose 完整部署
 - [ ] 前端 React + Ant Design Pro 骨架搭建
 - [ ] 迁移现有7个页面的所有功能到 React

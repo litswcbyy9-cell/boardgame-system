@@ -1,5 +1,6 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const AUTH_KEY = 'boardgame.auth.token';
+const ALLOW_PUBLIC_REGISTER = import.meta.env.VITE_ALLOW_PUBLIC_REGISTER === '1';
 let refreshTimer = null;
 
 const statusText = {
@@ -300,6 +301,7 @@ const clientErrorMessages = {
   unauthorized: '请先登录后再操作',
   forbidden: '当前账号没有执行该操作的权限',
   invalid_credentials: '账号或密码错误',
+  registration_disabled: '公开注册已关闭，请联系管理员创建员工账号',
   missing_fields: '缺少必填字段，请补全后再提交',
   invalid_guest_name: '访客名称不能为空',
   invalid_party_size: '人数必须在 1 到 20 人之间',
@@ -1271,7 +1273,7 @@ function renderGameCatalog() {
 }
 
 function renderAuthScreen() {
-  const isRegister = state.authMode === 'register';
+  const isRegister = ALLOW_PUBLIC_REGISTER && state.authMode === 'register';
   return `
     <div class="auth-shell">
       <section class="auth-visual">
@@ -1289,7 +1291,7 @@ function renderAuthScreen() {
           </div>
           <div class="auth-tabs">
             <button class="${!isRegister ? 'is-active' : ''}" data-auth-mode="login" type="button">登录</button>
-            <button class="${isRegister ? 'is-active' : ''}" data-auth-mode="register" type="button">注册</button>
+            ${ALLOW_PUBLIC_REGISTER ? `<button class="${isRegister ? 'is-active' : ''}" data-auth-mode="register" type="button">注册</button>` : ''}
           </div>
           ${
             isRegister
