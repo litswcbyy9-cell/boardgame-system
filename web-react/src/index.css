@@ -1,0 +1,13 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Customer booking page background */
+.customer-bg {
+  background: linear-gradient(135deg, rgba(22,20,19,0.88), rgba(22,20,19,0.5)),
+    url('https://images.unsplash.com/photo-1606092195730-5d7b9af1efc5?auto=format&fit=crop&w=1600&q=80') center / cover fixed;
+  min-height: 100vh;
+}
