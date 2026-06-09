@@ -14,6 +14,9 @@ import { SessionsPage } from './pages/sessions/SessionsPage';
 import { ReportsPage } from './pages/reports/ReportsPage';
 import { RecommendPage } from './pages/recommend/RecommendPage';
 import { CustomerPage } from './pages/customer/CustomerPage';
+import { MemberManagementPage } from './features/admin/MemberManagementPage';
+import { CouponManagementPage } from './features/admin/CouponManagementPage';
+import { BillingManagementPage } from './features/admin/BillingManagementPage';
 import { useAppStore } from './stores/appStore';
 
 const queryClient = new QueryClient({
@@ -59,6 +62,9 @@ const AppRoutes: React.FC = () => (
       <Route path="sessions" element={<SessionsPage />} />
       <Route path="reports" element={<ReportsPage />} />
       <Route path="recommend" element={<RecommendPage />} />
+      <Route path="admin/members" element={<MemberManagementPage />} />
+      <Route path="admin/coupons" element={<CouponManagementPage />} />
+      <Route path="admin/billing" element={<BillingManagementPage />} />
     </Route>
   </Routes>
 );

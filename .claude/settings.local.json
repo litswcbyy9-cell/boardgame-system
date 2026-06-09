@@ -22,7 +22,8 @@
       "Bash(curl *)",
       "Bash(chmod +x /tmp/test_phase2.sh)",
       "Bash(bash /tmp/test_phase2.sh)",
-      "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame -e ' *)"
+      "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame -e ' *)",
+      "Bash(python3 -c \"import sys, json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2, ensure_ascii=False\\)\\)\")"
     ]
   }
 }
