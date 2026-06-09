@@ -1,0 +1,297 @@
+\chapter{系统实现过程}
+
+\section{数据库完整搭建过程}
+
+\subsection{环境准备}
+
+\begin{enumerate}
+  \item 安装 MySQL 8.0 或更高版本
+  \item 配置字符集为 \code{utf8mb4}，排序规则为 \code{utf8mb4\_unicode\_ci}
+  \item 创建数据库用户和权限
+\end{enumerate}
+
+\subsection{初始化脚本执行顺序}
+
+系统提供了一套完整的初始化脚本，需要按以下顺序执行：
+
+\begin{table}[H]
+  \centering
+  \caption{数据库初始化脚本}
+  \label{tab:init_scripts}
+  \begin{tabularx}{\textwidth}{|l|l|X|}
+    \hline
+    \textbf{序号} & \textbf{文件名} & \textbf{内容说明} \\
+    \hline
+    1 & 01\_schema.sql & 创建所有表、主键、外键、索引、CHECK 约束、触发器 \\
+    \hline
+    2 & 02\_procedures.sql & 创建存储过程（预约、开台、结算、战绩、统计、智能推荐） \\
+    \hline
+    3 & 03\_seed.sql & 插入基础种子数据（门店、游戏、桌位、示例会员） \\
+    \hline
+    4 & 04\_views.sql & 创建视图（排行榜、账单、游戏热度、推荐特征、平面图等） \\
+    \hline
+    5 & 05\_bulk\_seed.sql & 插入大量测试数据（可选，用于压测） \\
+    \hline
+    6 & 06\_security\_grants.sql & 配置用户权限（演示用只读账号、受限应用账号） \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection{执行命令示例}
+
+\begin{lstlisting}[language=bash, caption=数据库初始化命令]
+# 创建数据库
+mysql -u root -p < db/bootstrap.sql
+
+# 创建应用用户
+mysql -u root -p < db/create-app-user.sql
+
+# 执行初始化脚本
+mysql -u boardgame -p boardgame < db/init/01_schema.sql
+mysql -u boardgame -p boardgame < db/init/02_procedures.sql
+mysql -u boardgame -p boardgame < db/init/03_seed.sql
+mysql -u boardgame -p boardgame < db/init/04_views.sql
+mysql -u boardgame -p boardgame < db/init/05_bulk_seed.sql
+mysql -u boardgame -p boardgame < db/init/06_security_grants.sql
+\end{lstlisting}
+
+\section{核心数据库对象}
+
+\subsection{触发器}
+
+触发器用于维护数据一致性和自动更新聚合数据。系统包含以下触发器：
+
+\begin{table}[H]
+  \centering
+  \caption{系统触发器清单}
+  \label{tab:triggers}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{触发器名称} & \textbf{功能说明} \\
+    \hline
+    tr\_players\_after\_insert\_stats & 新增会员时自动创建统计记录 \\
+    \hline
+    tr\_play\_sessions\_after\_insert\_state & 新增对局时更新桌位状态为占用 \\
+    \hline
+    tr\_play\_sessions\_after\_update\_release & 对局结束时更新桌位状态为空闲 \\
+    \hline
+    tr\_game\_records\_after\_insert\_stats & 新增战绩时更新会员统计（胜场、总局数、胜率） \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection{存储过程}
+
+存储过程实现了系统的核心业务逻辑：
+
+\begin{table}[H]
+  \centering
+  \caption{系统存储过程清单}
+  \label{tab:procedures}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{存储过程名称} & \textbf{功能说明} \\
+    \hline
+    sp\_reserve\_table & 创建预约，检测时段冲突和桌位容量是否满足预约人数 \\
+    \hline
+    sp\_checkin\_start\_session & 预约入场，创建对局会话，并记录使用人、电话和人数 \\
+    \hline
+    sp\_start\_walkin\_session & 现场开台，校验桌位容量后创建对局会话，并记录现场使用人信息 \\
+    \hline
+    sp\_end\_session\_settle & 结算关台，更新对局信息 \\
+    \hline
+    sp\_insert\_game\_record & 录入战绩，触发排行榜更新 \\
+    \hline
+    sp\_cancel\_reservation & 手动取消迟到或未到店预约 \\
+    \hline
+    sp\_expire\_overdue\_reservations & 自动将超出宽限期仍未入场的预约标记为未到店，并释放桌位 \\
+    \hline
+    sp\_report\_daily\_revenue & 日收入统计 \\
+    \hline
+    sp\_report\_game\_popularity & 游戏热度排行 \\
+    \hline
+    sp\_report\_table\_utilization & 桌位利用率分析 \\
+    \hline
+    sp\_recommend\_games & 根据人数、时长、类型偏好、会员历史和热度推荐桌游 \\
+    \hline
+    sp\_recommend\_tables & 过滤容量不足和时段冲突桌位，再根据容量、状态和利用率推荐桌位 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection{视图}
+
+视图提供了便捷的数据查询接口：
+
+\begin{table}[H]
+  \centering
+  \caption{系统视图清单}
+  \label{tab:views}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{视图名称} & \textbf{功能说明} \\
+    \hline
+    v\_table\_status\_floor & 平面图查询，包含桌位状态和当前预约/对局 \\
+    \hline
+    v\_leaderboard & 排行榜视图，按胜率排序 \\
+    \hline
+    v\_session\_billing\_detail & 对局账单明细 \\
+    \hline
+    v\_game\_catalog\_with\_stats & 游戏目录与热度统计 \\
+    \hline
+    v\_game\_recommendation\_features & 桌游推荐特征视图，聚合目录属性、历史局数和近 30 天热度 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{完整性控制实现}
+
+\subsection{实体完整性}
+
+\begin{enumerate}
+  \item 所有表都定义了 PRIMARY KEY
+  \item 使用 AUTO\_INCREMENT 自动生成主键值
+  \item 主键列定义为 NOT NULL
+\end{enumerate}
+
+\subsection{参照完整性}
+
+\begin{enumerate}
+  \item 使用 FOREIGN KEY 约束维护表间关系
+  \item 根据业务需求设置不同的删除策略
+  \item 例如：删除门店时级联删除其所有桌位
+\end{enumerate}
+
+\subsection{用户定义完整性}
+
+\begin{enumerate}
+  \item CHECK 约束：验证时间范围、金额范围等
+  \item ENUM 约束：限制状态字段的取值
+  \item UNIQUE 约束：保证某些字段的唯一性
+  \item NOT NULL 约束：保证必填字段
+\end{enumerate}
+
+\subsection{业务一致性}
+
+\begin{enumerate}
+  \item 触发器维护桌位占用/释放状态
+  \item 触发器维护会员排行聚合数据
+  \item 存储过程实现原子性的业务操作
+  \item 例如：预约时同时检测冲突、更新状态、记录日志
+\end{enumerate}
+
+\section{前台功能与后台数据库对象对应}
+
+\begin{table}[H]
+  \centering
+  \caption{前台功能与后台数据库对象对应关系}
+  \label{tab:feature_mapping}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{前台功能} & \textbf{后台主要支撑} \\
+    \hline
+    账号注册登录 & app\_users、auth\_sessions；密码加盐哈希，会话 token 仅保存哈希值 \\
+    \hline
+    平面图着色与桌位详情 & 视图 v\_table\_status\_floor + 表 game\_table\_state、play\_sessions、reservations；展示当前使用人和预约队列 \\
+    \hline
+    预约/取消/未到店处理 & 存储过程 sp\_reserve\_table、sp\_cancel\_reservation、sp\_expire\_overdue\_reservations \\
+    \hline
+    入场/现场开台 & sp\_checkin\_start\_session、sp\_start\_walkin\_session + 触发器占桌 \\
+    \hline
+    结算关台 & sp\_end\_session\_settle + 触发器释桌 \\
+    \hline
+    关台后录入战绩 & sp\_insert\_game\_record + 触发器更新排行聚合 \\
+    \hline
+    排行榜/报表 & 视图 v\_leaderboard；过程 sp\_report\_* \\
+    \hline
+    智能推荐 & 推荐特征视图；桌游推荐过程；桌位调度过程 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{智能推荐算法设计与实现}
+
+\subsection{桌游推荐评分模型}
+
+系统将桌游推荐设计为可解释的混合评分模型。推荐分数由六类特征加权得到：
+
+\begin{lstlisting}[caption=桌游推荐评分公式]
+score =
+  people_score   * 0.25
++ duration_score * 0.15
++ category_score * 0.15
++ history_score  * 0.20
++ hot_score      * 0.15
++ weight_score   * 0.10
+\end{lstlisting}
+
+各分项含义如下：
+
+\begin{itemize}
+  \item \code{people\_score}：人数是否落在支持范围内
+  \item \code{duration\_score}：预计时长与平均时长的接近程度
+  \item \code{category\_score}：类型偏好是否匹配
+  \item \code{history\_score}：会员历史是否偏好该游戏或同类游戏
+  \item \code{hot\_score}：近 30 天战绩记录热度
+  \item \code{weight\_score}：门店运营侧人工推荐权重
+\end{itemize}
+
+该算法由 \code{sp\_recommend\_games} 存储过程实现，返回 Top 5 推荐游戏及各分项得分。
+
+\subsection{桌位调度评分模型}
+
+桌位调度算法以“可预约、容量合适、资源均衡”为目标。系统首先过滤占用中桌位和目标时段存在冲突的预约，再计算：
+
+\begin{lstlisting}[caption=桌位推荐评分公式]
+score =
+  capacity_score     * 0.55
++ availability_score * 0.25
++ utilization_score  * 0.20
+\end{lstlisting}
+
+其中，\code{capacity\_score} 避免小队占用大桌或大队挤小桌；\code{availability\_score} 区分当前空闲与仅在目标时段可用；\code{utilization\_score} 用于均衡近期桌位使用频率。该算法由 \code{sp\_recommend\_tables} 存储过程实现。
+
+\section{完成效果}
+
+\subsection{功能完整性}
+
+在浏览器中可以完成以下完整的业务流程：
+
+\begin{enumerate}
+  \item 录入预约人数、时间和联系方式，由系统匹配容量合适的空闲桌位
+  \item 必要时手动选择更高配置桌位或包间
+  \item 创建预约（客户远程预约通过独立公开页面提交，员工后台负责处理）或现场开台
+  \item 点开桌位查看桌位档案、当前使用人、联系方式、开台人数和预约队列
+  \item 对迟到或未到店预约进行手动取消，并由系统定时自动关闭超时预约
+  \item 在会员详情中查看该会员的预约记录、预约人、人数、联系方式、开始和结束时间
+  \item 基于人数、时长和会员偏好生成桌游推荐
+  \item 基于目标时段生成可用桌位推荐
+  \item 入场开台
+  \item 计时结算
+  \item 录入战绩
+  \item 查看排行榜
+\end{enumerate}
+
+\subsection{数据库完整性}
+
+数据库侧可以验证以下对象均已按 SQL 脚本创建：
+
+\begin{enumerate}
+  \item 12 个数据表，覆盖门店、员工档案、账号、登录会话、游戏、桌位、会员、预约、对局、战绩、统计和运行态
+  \item 4 个触发器
+  \item 12 个存储过程
+  \item 5 个视图
+  \item 多个索引和约束
+  \item 权限脚本（演示用只读账号、受限应用账号）
+\end{enumerate}
+
+\subsection{测试数据}
+
+系统包含以下测试数据：
+
+\begin{enumerate}
+  \item 基础种子数据：1 个门店、25 个游戏、12 个桌位、30 个示例会员
+  \item 大量测试数据（可选）：约 66 个会员、360+ 条历史对局和战绩记录
+\end{enumerate}
+
+这些测试数据可用于功能验证和性能压测。

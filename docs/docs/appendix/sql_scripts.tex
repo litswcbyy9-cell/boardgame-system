@@ -1,0 +1,68 @@
+\chapter{数据库 SQL 脚本附录}
+
+本附录列出了项目中使用的所有数据库脚本文件。这些脚本位于 \code{db/} 目录下，可以按顺序执行完成数据库的完整搭建。
+
+\section{脚本文件清单}
+
+\begin{table}[H]
+  \centering
+  \caption{数据库脚本文件清单}
+  \label{tab:sql_scripts}
+  \begin{tabularx}{\textwidth}{|l|l|X|}
+    \hline
+    \textbf{序号} & \textbf{文件路径} & \textbf{功能说明} \\
+    \hline
+    1 & db/bootstrap.sql & 创建数据库和初始配置 \\
+    \hline
+    2 & db/create-app-user.sql & 创建应用用户 \\
+    \hline
+    3 & db/init/01\_schema.sql & 表、约束、索引、触发器 \\
+    \hline
+    4 & db/init/02\_procedures.sql & 存储过程 \\
+    \hline
+    5 & db/init/03\_seed.sql & 基础种子数据 \\
+    \hline
+    6 & db/init/04\_views.sql & 视图 \\
+    \hline
+    7 & db/init/05\_bulk\_seed.sql & 大量测试数据 \\
+    \hline
+    8 & db/init/06\_security\_grants.sql & 权限脚本 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{执行说明}
+
+这些脚本需要按顺序执行，原因如下：
+
+\begin{enumerate}
+  \item \code{01\_schema.sql} 必须先执行，因为它创建了所有基础表结构
+  \item \code{02\_procedures.sql} 依赖于表结构和触发器
+  \item \code{03\_seed.sql} 依赖于表结构
+  \item \code{04\_views.sql} 依赖于表和种子数据
+  \item \code{05\_bulk\_seed.sql} 是可选的，用于测试
+  \item \code{06\_security\_grants.sql} 可以最后执行
+\end{enumerate}
+
+\section{脚本特点}
+
+本项目的数据库脚本具有以下特点：
+
+\begin{enumerate}
+  \item \textbf{可重复执行}：使用 \code{DROP ... IF EXISTS} 和 \code{CREATE IF NOT EXISTS} 保证脚本可以安全重复执行
+  \item \textbf{完整性高}：包含完整的表结构、约束、索引、触发器、存储过程、视图
+  \item \textbf{注释清晰}：关键逻辑都有详细注释
+  \item \textbf{测试友好}：提供了基础种子数据和大量测试数据
+  \item \textbf{安全性考虑}：包含分级权限脚本
+\end{enumerate}
+
+\section{部署建议}
+
+在实际部署时，建议：
+
+\begin{enumerate}
+  \item 开发环境可以执行所有脚本，包括 \code{05\_bulk\_seed.sql}
+  \item 生产环境应跳过 \code{05\_bulk\_seed.sql}，避免插入测试数据
+  \item 生产环境需要修改 \code{06\_security\_grants.sql} 中的默认密码
+  \item 建议使用数据库迁移工具管理后续的结构变更
+\end{enumerate}

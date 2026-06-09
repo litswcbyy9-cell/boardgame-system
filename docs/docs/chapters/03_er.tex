@@ -1,0 +1,215 @@
+\chapter{数据库概念结构设计}
+
+\section{E-R 图符号规范}
+
+本系统采用 Peter Chen E-R 模型作为概念设计工具，图元符号说明如下：
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \caption{E-R 图符号规范}
+  \label{tab:er_symbols}
+  \begin{tabularx}{\textwidth}{|p{2cm}|p{2cm}|X|}
+    \hline
+    \textbf{图元类型} & \textbf{几何形状} & \textbf{说明} \\
+    \hline
+    强实体 & 矩形 & 可独立存在、有标识符的事物 \\
+    \hline
+    弱实体 & 双线矩形 & 依赖其它实体存在的事物 \\
+    \hline
+    属性 & 椭圆 & 描述实体特征的字段 \\
+    \hline
+    主键属性 & 下划线椭圆 & 唯一标识实体的属性 \\
+    \hline
+    联系 & 菱形 & 实体间的关联关系 \\
+    \hline
+    基数 & 连线标注 & 表示 1:1、1:N、M:N 等关系 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{局部 E-R 图}
+
+\subsection{局部 E-R 图 1：门店与桌位}
+
+该局部 E-R 图描述门店（Venue）与桌位（Game Table）之间的 1:N 关系。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=1.2]
+    % 实体
+    \node[draw, rectangle, thick, fill=blue!20, minimum width=2cm, minimum height=1cm] (venue) at (0,0) {门店};
+    \node[draw, rectangle, thick, fill=blue!20, minimum width=2cm, minimum height=1cm] (table) at (7,0) {桌位};
+
+    % 联系
+    \node[draw, diamond, thick, fill=orange!20, minimum width=1.5cm, minimum height=1cm] (rel) at (3.5,0) {包含};
+
+    % 属性
+    \node[draw, ellipse, fill=purple!20] (v_id) at (0,2.5) {id};
+    \node[draw, ellipse, fill=purple!20] (v_name) at (-2,1.2) {name};
+    \node[draw, ellipse, fill=purple!20] (v_addr) at (2,1.2) {address};
+    \node[draw, ellipse, fill=purple!20] (t_id) at (7,2.5) {id};
+    \node[draw, ellipse, fill=purple!20] (t_code) at (5,1.2) {code};
+    \node[draw, ellipse, fill=purple!20] (t_pos) at (9,1.2) {pos\_x, pos\_y};
+
+    % 连线
+    \draw (venue) -- node[midway, above] {1} (rel);
+    \draw (rel) -- node[midway, above] {N} (table);
+    \draw (venue) -- (v_id);
+    \draw (venue) -- (v_name);
+    \draw (venue) -- (v_addr);
+    \draw (table) -- (t_id);
+    \draw (table) -- (t_code);
+    \draw (table) -- (t_pos);
+  \end{tikzpicture}
+  \caption{局部 E-R 图 1：门店与桌位}
+  \label{fig:er_local1}
+\end{figure}
+
+\subsection{局部 E-R 图 2：桌位、预约与会员}
+
+该局部 E-R 图描述桌位（Game Table）、预约（Reservation）和会员（Player）之间的关系。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=1.1]
+    % 实体
+    \node[draw, rectangle, thick, fill=blue!20] (table) at (0,0) {桌位};
+    \node[draw, rectangle, thick, fill=blue!20] (res) at (5,0) {预约};
+    \node[draw, rectangle, thick, fill=blue!20] (player) at (10,0) {会员};
+
+    % 联系
+    \node[draw, diamond, thick, fill=orange!20] (rel1) at (2.5,0) {预订};
+    \node[draw, diamond, thick, fill=orange!20] (rel2) at (7.5,0) {参与};
+
+    % 连线
+    \draw (table) -- node[midway, above] {1} (rel1);
+    \draw (rel1) -- node[midway, above] {N} (res);
+    \draw (res) -- node[midway, above] {0..1} (rel2);
+    \draw (rel2) -- node[midway, above] {1} (player);
+  \end{tikzpicture}
+  \caption{局部 E-R 图 2：桌位、预约与会员}
+  \label{fig:er_local2}
+\end{figure}
+
+\subsection{局部 E-R 图 3：桌位、对局会话与预约}
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=1.1]
+    % 实体
+    \node[draw, rectangle, thick, fill=blue!20] (table) at (0,0) {桌位};
+    \node[draw, rectangle, thick, fill=blue!20] (session) at (5,0) {对局会话};
+    \node[draw, rectangle, thick, fill=blue!20] (res) at (10,0) {预约};
+
+    % 联系
+    \node[draw, diamond, thick, fill=orange!20] (rel1) at (2.5,0) {占用};
+    \node[draw, diamond, thick, fill=orange!20] (rel2) at (7.5,0) {来源};
+
+    % 连线
+    \draw (table) -- node[midway, above] {1} (rel1);
+    \draw (rel1) -- node[midway, above] {N} (session);
+    \draw (session) -- node[midway, above] {0..1} (rel2);
+    \draw (rel2) -- node[midway, above] {1} (res);
+  \end{tikzpicture}
+  \caption{局部 E-R 图 3：桌位、对局会话与预约}
+  \label{fig:er_local3}
+\end{figure}
+
+\subsection{局部 E-R 图 4：对局、战绩、游戏与会员}
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=1.0]
+    % 实体
+    \node[draw, rectangle, thick, fill=blue!20] (session) at (0,0) {对局};
+    \node[draw, rectangle, thick, fill=blue!20] (record) at (5,0) {战绩};
+    \node[draw, rectangle, thick, fill=blue!20] (game) at (10,1.5) {游戏目录};
+    \node[draw, rectangle, thick, fill=blue!20] (player) at (10,-1.5) {会员};
+
+    % 联系
+    \node[draw, diamond, thick, fill=orange!20] (rel1) at (2.5,0) {产生};
+    \node[draw, diamond, thick, fill=orange!20] (rel2) at (7.5,1.5) {对应};
+    \node[draw, diamond, thick, fill=orange!20] (rel3) at (7.5,-1.5) {获胜};
+
+    % 连线
+    \draw (session) -- node[midway, above] {1} (rel1);
+    \draw (rel1) -- node[midway, above] {N} (record);
+    \draw (record) -- node[midway, above] {N} (rel2);
+    \draw (rel2) -- node[midway, above] {1} (game);
+    \draw (record) -- node[midway, below] {0..1} (rel3);
+    \draw (rel3) -- node[midway, below] {1} (player);
+  \end{tikzpicture}
+  \caption{局部 E-R 图 4：对局、战绩、游戏与会员}
+  \label{fig:er_local4}
+\end{figure}
+
+\subsection{局部 E-R 图 5：桌位运行态}
+
+桌位运行态是依赖于桌位的弱实体，用于维护当前桌位的实时状态。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=1.0]
+    % 实体 - 拉开间距
+    \node[draw, rectangle, thick, fill=blue!20] (table) at (0,0) {桌位};
+    \node[draw, double, rectangle, thick, fill=cyan!20] (state) at (5.5,0) {桌位状态};
+
+    % 联系
+    \node[draw, diamond, thick, fill=orange!20] (rel) at (2.75,0) {当前状态};
+
+    % 连线
+    \draw (table) -- node[midway, above] {1} (rel);
+    \draw (rel) -- node[midway, above] {1} (state);
+  \end{tikzpicture}
+  \caption{局部 E-R 图 5：桌位运行态}
+  \label{fig:er_local5}
+\end{figure}
+
+\section{全局 E-R 图}
+
+全局 E-R 图整合所有主要实体及其关系，如图 \ref{fig:er_global} 所示。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=0.9]
+    % 实体
+    \node[draw, rectangle, thick, fill=blue!20] (venue) at (0,4) {门店};
+    \node[draw, rectangle, thick, fill=blue!20] (game) at (7,4) {游戏目录};
+    \node[draw, rectangle, thick, fill=blue!20] (table) at (0,2) {桌位};
+    \node[draw, double, rectangle, thick, fill=cyan!20] (state) at (0,0) {桌位状态};
+    \node[draw, rectangle, thick, fill=blue!20] (player) at (7,2) {会员};
+    \node[draw, rectangle, thick, fill=blue!20] (stats) at (9.5,2) {会员统计};
+    \node[draw, rectangle, thick, fill=blue!20] (res) at (2.5,1) {预约};
+    \node[draw, rectangle, thick, fill=blue!20] (session) at (2.5,-1) {对局会话};
+    \node[draw, rectangle, thick, fill=blue!20] (record) at (5,-1) {战绩};
+
+    % 关系连线
+    \draw (venue) -- node[midway, left] {1:N} (table);
+    \draw (table) -- node[midway, left] {1:1} (state);
+    \draw (table) -- node[midway, above] {1:N} (res);
+    \draw (player) -- node[midway, right] {1:1} (stats);
+    \draw (table) -- node[midway, left] {1:N} (session);
+    \draw (res) -- node[midway, left] {0..1:N} (session);
+    \draw (session) -- node[midway, above] {1:N} (record);
+    \draw (game) -- node[midway, right] {1:N} (record);
+    \draw (player) -- node[midway, right] {0..1:N} (record);
+  \end{tikzpicture}
+  \caption{全局 E-R 图}
+  \label{fig:er_global}
+\end{figure}
+
+\section{概念设计说明}
+
+从全局 E-R 图可以看出：
+
+\begin{enumerate}
+  \item \textbf{门店}与\textbf{桌位}之间是 1:N 关系，一家门店可以有多个桌位
+  \item \textbf{桌位状态}是\textbf{桌位}的弱实体，两者是 1:1 关系
+  \item \textbf{预约}依赖于\textbf{桌位}，一个桌位可以有多条预约记录
+  \item \textbf{对局会话}可以来源于\textbf{预约}，也可以是现场开台（预约为空）
+  \item \textbf{战绩}依赖于\textbf{对局会话}和\textbf{游戏目录}，胜者可以是\textbf{会员}或访客
+  \item \textbf{会员统计}是\textbf{会员}的一对一扩展表，用于维护聚合数据
+\end{enumerate}
+
+该概念模型为后续的逻辑结构设计奠定了坚实基础。

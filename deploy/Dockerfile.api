@@ -1,0 +1,9 @@
+FROM node:20-alpine
+WORKDIR /app
+COPY server/package.json ./
+RUN npm install --omit=dev
+COPY server/src ./src
+ENV NODE_ENV=production
+ENV PORT=9898
+EXPOSE 9898
+CMD ["node", "src/index.js"]

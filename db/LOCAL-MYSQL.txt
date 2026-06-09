@@ -1,0 +1,31 @@
+本机 MySQL 8 初始化（Windows）
+
+【刚用官方安装包重装 MySQL 后】
+- 安装结束时若设置了 root 密码，请用该密码跑下面脚本（不要用旧机器上的密码）。
+- 全新实例里一般没有 boardgame 库，直接执行第 2 步即可。
+- 若以前在本机建过 boardgame、想彻底重来，加上参数 -ResetDatabase（会先 DROP DATABASE）。
+
+1) mysql.exe 位置（任选其一）
+   - 把「MySQL Server x.x\bin」加入系统 PATH；或
+   - 记住路径，常见为：
+     C:\Program Files\MySQL\MySQL Server 8.4\bin\mysql.exe
+     C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe
+   - setup-local.ps1 会按 8.4→8.0 顺序自动在 Program Files 下查找 mysql.exe。
+
+2) 在仓库根目录打开 PowerShell（密码换成你**当前** root 密码；无密码则 -AdminPassword ""）：
+
+   powershell -ExecutionPolicy Bypass -File .\db\setup-local.ps1 -AdminPassword "你的root密码"
+
+   若未搜到 mysql.exe，请显式指定：
+
+   -MysqlExe "C:\Program Files\MySQL\MySQL Server 8.4\bin\mysql.exe"
+
+   清空旧 boardgame 库后重建：
+
+   powershell -ExecutionPolicy Bypass -File .\db\setup-local.ps1 -AdminPassword "你的root密码" -ResetDatabase
+
+3) 复制 server\.env.example 为 server\.env（默认 localhost、库 boardgame、用户 boardgame / 密码 boardgame）。若你安装时改了端口，在 .env 里改 DB_PORT。
+
+4) 在项目根目录：npm install（若尚未安装），然后 npm run dev（同时启动 API 与纯 JavaScript 前端 web/）。
+
+说明：脚本会执行 db\bootstrap.sql、db\create-app-user.sql，并按顺序导入 db\init\ 下 01～04。Access denied 多半是 root 密码不对或没有用管理员账号执行前两步。

@@ -1,0 +1,361 @@
+\chapter{数据库逻辑结构设计}
+
+\section{E-R 模型向关系模式的转换}
+
+根据 E-R 模型的转换规则，将概念模型转换为关系模式。转换规则如下：
+
+\begin{enumerate}
+  \item \textbf{实体转换}：每个实体转换为一个关系模式，实体的属性成为关系的属性，实体的主键成为关系的主键。
+  \item \textbf{1:N 关系转换}：在 N 端关系模式中增加 1 端的主键作为外键，建立两个关系之间的参照完整性约束。
+  \item \textbf{1:1 关系转换}：可以将一个关系的主键作为另一个关系的外键，或者将两个关系合并为一个。本系统中采用外键方式。
+  \item \textbf{M:N 关系转换}：需要创建一个新的关系模式来表示，新关系的主键由两个关系的主键组成，同时包含联系的属性。
+  \item \textbf{弱实体转换}：弱实体的主键由其所依赖的强实体的主键和自身的部分键组成，同时包含对强实体的外键约束。
+\end{enumerate}
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \caption{E-R 模型向关系模式的转换}
+  \label{tab:er_to_relation}
+  \begin{tabularx}{\textwidth}{|p{2.5cm}|p{3.5cm}|X|}
+    \hline
+    \textbf{概念对象} & \textbf{关系模式} & \textbf{转换说明} \\
+    \hline
+    实体 venues & venues & 实体直接成表，id 为主键 \\
+    \hline
+    实体 games & games & 实体直接成表，推荐字段用于算法评分 \\
+    \hline
+    实体 game\_tables & game\_tables & 1:N 关系，容量和区域字段用于桌位调度 \\
+    \hline
+    弱实体 运行态 & game\_table\_state & 1:1 依赖，table\_id 为主键和外键 \\
+    \hline
+    实体 players & players & 实体直接成表，兼具会员档案与储值信息 \\
+    \hline
+    1:1 关系 & player\_stats & 与 players 一对一扩展，player\_id 为主键和外键 \\
+    \hline
+    联系 预约 & reservations & N 端独立表，table\_id 和 player\_id 为外键 \\
+    \hline
+    联系 对局 & play\_sessions & 含两端外键，reservation\_id 可为空表示现场开台 \\
+    \hline
+    联系 战绩 & game\_records & 含多端外键，title\_snapshot 为历史快照 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{关系模式详细设计}
+
+\subsection{venues（门店）}
+
+\begin{verbatim}
+CREATE TABLE venues (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  address VARCHAR(255),
+  logo_url VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+\end{verbatim}
+
+\subsection{games（桌游目录）}
+
+\begin{verbatim}
+CREATE TABLE games (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  title VARCHAR(100) NOT NULL,
+  cover_image_url VARCHAR(500),
+  rules_pdf_url VARCHAR(500),
+  min_players INT DEFAULT 2,
+  max_players INT DEFAULT 8,
+  category VARCHAR(32) NOT NULL,
+  difficulty_level INT DEFAULT 3,
+  avg_minutes INT DEFAULT 90,
+  recommend_weight DECIMAL(5,2) DEFAULT 1.00,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+\end{verbatim}
+
+\subsection{game\_tables（桌位）}
+
+\begin{verbatim}
+CREATE TABLE game_tables (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  venue_id INT NOT NULL,
+  code VARCHAR(50) NOT NULL,
+  pos_x INT NOT NULL,
+  pos_y INT NOT NULL,
+  seat_capacity INT DEFAULT 4,
+  area_type VARCHAR(24) DEFAULT 'standard',
+  floor_photo_url VARCHAR(500),
+  sort_order INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_venue_code (venue_id, code),
+  INDEX idx_venue_pos (venue_id, pos_x, pos_y)
+);
+\end{verbatim}
+
+\subsection{staff\_profiles（员工档案）}
+
+\begin{verbatim}
+CREATE TABLE staff_profiles (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  employee_no VARCHAR(32) UNIQUE NOT NULL,
+  full_name VARCHAR(100) NOT NULL,
+  phone VARCHAR(32),
+  position VARCHAR(64) DEFAULT '店员',
+  status ENUM('active', 'disabled') DEFAULT 'active',
+  hired_at DATE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+\end{verbatim}
+
+\subsection{app\_users（后台账号）}
+
+\begin{verbatim}
+CREATE TABLE app_users (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  staff_id INT,
+  username VARCHAR(64) UNIQUE NOT NULL,
+  display_name VARCHAR(100) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  role ENUM('admin', 'staff') DEFAULT 'staff',
+  status ENUM('active', 'disabled') DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (staff_id) REFERENCES staff_profiles(id) ON DELETE SET NULL
+);
+\end{verbatim}
+
+\subsection{auth\_sessions（登录会话）}
+
+\begin{verbatim}
+CREATE TABLE auth_sessions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  token_hash CHAR(64) UNIQUE NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+\end{verbatim}
+
+\subsection{players（会员）}
+
+\begin{verbatim}
+CREATE TABLE players (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  member_no VARCHAR(32) UNIQUE,
+  display_name VARCHAR(100) NOT NULL,
+  phone VARCHAR(20),
+  avatar_url VARCHAR(500),
+  balance_cents INT DEFAULT 0,
+  total_recharged_cents INT DEFAULT 0,
+  total_spent_cents INT DEFAULT 0,
+  status ENUM('active', 'disabled') DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+\end{verbatim}
+
+\subsection{reservations（预约）}
+
+\begin{verbatim}
+CREATE TABLE reservations (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  table_id INT NOT NULL,
+  player_id INT,
+  guest_name VARCHAR(100) NOT NULL,
+  guest_phone VARCHAR(30),
+  party_size INT NOT NULL DEFAULT 1,
+  reserved_start DATETIME NOT NULL,
+  reserved_end DATETIME NOT NULL,
+  status ENUM('pending', 'active', 'cancelled',
+              'completed', 'no_show') DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (table_id) REFERENCES game_tables(id) ON DELETE CASCADE,
+  FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE SET NULL,
+  CHECK (party_size BETWEEN 1 AND 20),
+  CHECK (reserved_end > reserved_start),
+  INDEX idx_table_time (table_id, reserved_start, reserved_end),
+  INDEX idx_status (status)
+);
+\end{verbatim}
+
+\subsection{play\_sessions（对局会话）}
+
+\begin{lstlisting}
+CREATE TABLE play_sessions (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  table_id INT NOT NULL,
+  reservation_id INT,
+  guest_name VARCHAR(100),
+  guest_phone VARCHAR(30),
+  party_size INT NOT NULL DEFAULT 1,
+  started_at DATETIME NOT NULL,
+  ended_at DATETIME,
+  billed_minutes INT,
+  amount_cents INT,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (table_id) REFERENCES game_tables(id) ON DELETE CASCADE,
+  FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE SET NULL,
+  CHECK (party_size BETWEEN 1 AND 20),
+  CHECK (amount_cents >= 0 AND amount_cents <= 999999),
+  INDEX idx_table_time (table_id, started_at),
+  INDEX idx_ended (ended_at)
+);
+\end{lstlisting}
+
+\subsection{game\_records（战绩）}
+
+\begin{verbatim}
+CREATE TABLE game_records (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  session_id INT NOT NULL,
+  game_id INT NOT NULL,
+  winner_player_id INT,
+  title_snapshot VARCHAR(100),
+  score_json JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (session_id) REFERENCES play_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE RESTRICT,
+  FOREIGN KEY (winner_player_id) REFERENCES players(id) ON DELETE SET NULL,
+  INDEX idx_session (session_id),
+  INDEX idx_game (game_id),
+  INDEX idx_winner (winner_player_id)
+);
+\end{verbatim}
+
+\subsection{player\_stats（会员统计）}
+
+\begin{lstlisting}
+CREATE TABLE player_stats (
+  player_id INT PRIMARY KEY,
+  wins INT DEFAULT 0,
+  games INT DEFAULT 0,
+  win_rate VARCHAR(10) DEFAULT '0%',
+  last_win_at DATETIME,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+);
+\end{lstlisting}
+
+\section{规范化处理（至 3NF）}
+
+\subsection{第一范式（1NF）}
+
+第一范式要求所有属性都是原子的，不能再分解。本系统中：
+
+\begin{enumerate}
+  \item 所有字段都是原子值，不存在重复组
+  \item 复杂数据（如多人评分）使用 JSON 字段存储，避免创建多行记录
+  \item 例如 \code{game\_records.score\_json} 存储多人评分信息
+\end{enumerate}
+
+\subsection{第二范式（2NF）}
+
+第二范式要求消除非主属性对主键的部分依赖。本系统中：
+
+\begin{enumerate}
+  \item 所有表都有单一主键或复合主键
+  \item 非主属性完全依赖于主键，不存在部分依赖
+  \item 例如 \code{reservations} 表中，所有字段都完全依赖于 \code{id}
+\end{enumerate}
+
+\subsection{第三范式（3NF）}
+
+第三范式要求消除非主属性间的传递依赖。本系统中：
+
+\begin{enumerate}
+  \item 大多数表都满足 3NF
+  \item \code{game\_records.title\_snapshot} 是一个受控冗余，用于保存历史快照
+  \item 这样做的原因是：如果游戏名称被修改，历史战绩仍然能显示当时的游戏名称
+  \item 这是一个合理的设计权衡，在需求中已明确说明
+\end{enumerate}
+
+\section{完整性约束设计}
+
+\subsection{实体完整性}
+
+\begin{enumerate}
+  \item 所有表都有主键（PRIMARY KEY）
+  \item 主键使用 AUTO\_INCREMENT 自动生成
+  \item 主键不允许为空
+\end{enumerate}
+
+\subsection{参照完整性}
+
+\begin{enumerate}
+  \item 使用 FOREIGN KEY 约束维护表间关系
+  \item 删除策略：
+    \begin{itemize}
+      \item ON DELETE CASCADE：级联删除（如删除门店时删除其所有桌位）
+      \item ON DELETE SET NULL：设为空（如删除会员时预约的会员字段设为空）
+      \item ON DELETE RESTRICT：禁止删除（如删除游戏时若有战绩记录则禁止删除）
+    \end{itemize}
+\end{enumerate}
+
+\subsection{用户定义完整性}
+
+\begin{enumerate}
+  \item CHECK 约束：
+    \begin{itemize}
+      \item \code{reserved\_end > reserved\_start}：预约结束时间必须晚于开始时间
+      \item \code{amount\_cents >= 0 AND amount\_cents <= 999999}：金额范围限制
+      \item \code{difficulty\_level BETWEEN 1 AND 5}：游戏难度限定在 1--5
+      \item \code{seat\_capacity BETWEEN 1 AND 20}：桌位容量限定在合理范围
+    \end{itemize}
+  \item ENUM 约束：
+    \begin{itemize}
+      \item 预约状态包括待入场、已入场、已取消、已完成和未到店，状态只能在业务允许范围内流转
+    \end{itemize}
+  \item UNIQUE 约束：
+    \begin{itemize}
+      \item \code{venues.name}：门店名称唯一
+      \item \code{game\_tables(venue\_id, code)}：同一门店内桌位编号唯一
+    \end{itemize}
+\end{enumerate}
+
+\section{索引设计}
+
+为了提升查询性能，设计了以下索引：
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \caption{索引设计}
+  \label{tab:indexes}
+  \begin{tabularx}{\textwidth}{|p{2.2cm}|p{4.0cm}|X|}
+    \hline
+    \textbf{表名} & \textbf{索引名} & \textbf{索引列} \\
+    \hline
+    game\_tables & idx\_venue\_pos & (venue\_id, pos\_x, pos\_y) \\
+    \hline
+    game\_tables & ix\_tables\_capacity & (seat\_capacity, area\_type) \\
+    \hline
+    games & ix\_games\_recommend & (category, difficulty\_level, avg\_minutes) \\
+    \hline
+    reservations & idx\_table\_time & (table\_id, reserved\_start, reserved\_end) \\
+    \hline
+    reservations & idx\_status & (status) \\
+    \hline
+    play\_sessions & idx\_table\_time & (table\_id, started\_at) \\
+    \hline
+    play\_sessions & idx\_ended & (ended\_at) \\
+    \hline
+    game\_records & idx\_session & (session\_id) \\
+    \hline
+    game\_records & idx\_game & (game\_id) \\
+    \hline
+    game\_records & idx\_winner & (winner\_player\_id) \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+这些索引主要用于：
+
+\begin{enumerate}
+  \item 时间范围查询（预约冲突检测）
+  \item 状态过滤（查询待处理预约）
+  \item 关联查询（战绩统计）
+\end{enumerate}

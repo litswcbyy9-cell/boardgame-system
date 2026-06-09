@@ -1,0 +1,109 @@
+\chapter{选题说明与需求介绍}
+
+\section{选题背景}
+
+随着桌游文化的普及，越来越多的桌游门店应运而生。这些门店需要管理大量的桌位资源、顾客预约、对局计时与结算、战绩登记等复杂的业务流程。
+
+传统的手工管理方式存在以下问题：
+
+\begin{enumerate}
+  \item \textbf{时段冲突}：无法有效防止同一桌位的重复预约
+  \item \textbf{状态不一致}：桌位状态与现场实际情况容易出现偏差
+  \item \textbf{统计困难}：难以快速生成收入、利用率等经营数据
+  \item \textbf{数据丢失}：缺乏完整的历史记录和审计追踪
+  \item \textbf{效率低下}：手工操作耗时，容易出错
+\end{enumerate}
+
+本课程设计采用 \textbf{MySQL 8} 作为后台数据库，以 \textbf{E-R 概念模型} 指导逻辑结构与物理实现，通过 \textbf{完整性约束、触发器、存储过程、视图、索引与分级权限} 等数据库高级特性，构建一个完整的桌游门店运营管理系统。为避免系统停留在传统 CRUD 管理层面，本设计进一步引入 \textbf{混合推荐算法与桌位调度评分}，根据会员历史偏好、预约人数、预计时长、近期热度和桌位容量等因素辅助店员决策。
+
+\section{需求介绍}
+
+\subsection{功能需求}
+
+系统需要支持以下核心功能：
+
+\begin{enumerate}[label=\textbf{R\arabic*}]
+  \item \textbf{场地与桌位管理}
+    \begin{itemize}
+      \item 维护门店基本信息（名称、地址、LOGO 等）
+      \item 维护桌位编号、平面图坐标
+      \item 支持多媒体引用（URL 类型的图片、PDF 等）
+    \end{itemize}
+
+  \item \textbf{预约管理}
+    \begin{itemize}
+      \item 支持桌位时段预约
+      \item 自动检测预约时段冲突
+      \item 防止占用中的桌位被预约
+      \item 支持预约取消
+      \item 支持预约列表查询
+    \end{itemize}
+
+  \item \textbf{对局与计费}
+    \begin{itemize}
+      \item 支持预约入场开台
+      \item 支持现场直接开台（不通过预约）
+      \item 支持对局计时与结算
+      \item 记录计费时长和金额
+    \end{itemize}
+
+  \item \textbf{战绩与排行}
+    \begin{itemize}
+      \item 支持关台后录入战绩
+      \item 维护桌游目录（封面图、规则 PDF 等）
+      \item 自动生成排行榜
+      \item 支持胜场、总局数、胜率等统计
+    \end{itemize}
+
+  \item \textbf{统计报表}
+    \begin{itemize}
+      \item 日收入统计
+      \item 游戏热度排行
+      \item 桌位利用率分析
+      \item 会员活跃度统计
+    \end{itemize}
+
+  \item \textbf{智能推荐与调度优化}
+    \begin{itemize}
+      \item 根据人数、时长、类型偏好和会员历史记录推荐桌游
+      \item 根据容量、时段冲突和近期利用率推荐桌位
+      \item 输出推荐分数和可解释推荐理由，辅助门店快速接待
+    \end{itemize}
+\end{enumerate}
+
+\subsection{非功能需求}
+
+\begin{enumerate}[label=\textbf{NR\arabic*}]
+  \item \textbf{数据完整性}：通过外键约束、CHECK 约束、触发器等机制保证数据一致性
+  \item \textbf{并发控制}：支持多用户并发操作，防止数据竞争
+  \item \textbf{性能}：查询响应时间 < 500ms，支持 1000+ 并发用户
+  \item \textbf{安全性}：实现分级权限控制，敏感操作需要审计
+  \item \textbf{可维护性}：代码注释完整，文档齐全，易于扩展
+  \item \textbf{可用性}：支持备份恢复，故障恢复时间 < 1 小时
+\end{enumerate}
+
+\section{系统特点}
+
+本系统设计具有以下特点：
+
+\begin{enumerate}
+  \item \textbf{库内对象齐全}：包含表、视图、索引、触发器、存储过程、测试数据、权限脚本等
+  \item \textbf{业务逻辑下沉}：将桌位状态维护、战绩聚合等关键逻辑通过触发器和存储过程实现，减轻应用层负担
+  \item \textbf{历史可追溯}：通过快照字段（如 \code{title\_snapshot}）记录历史数据，避免目录改名破坏历史语义
+  \item \textbf{智能化决策}：通过视图聚合历史特征，并在存储过程中实现混合评分推荐算法
+  \item \textbf{规范化设计}：遵循 3NF 规范，同时在必要处允许受控冗余以提升性能
+  \item \textbf{易于扩展}：架构清晰，易于添加新的功能模块和报表
+\end{enumerate}
+
+\section{设计目标}
+
+本课程设计的目标是：
+
+\begin{enumerate}
+  \item 完整展示从需求分析到数据库实现的全过程
+  \item 深入理解 E-R 模型、关系模式、规范化等数据库设计理论
+  \item 掌握 MySQL 的高级特性（触发器、存储过程、视图等）
+  \item 掌握基于历史数据的可解释推荐算法设计方法
+  \item 学会编写规范的数据库设计文档
+  \item 培养系统思维和工程实践能力
+\end{enumerate}

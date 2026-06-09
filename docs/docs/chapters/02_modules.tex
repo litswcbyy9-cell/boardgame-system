@@ -1,0 +1,192 @@
+\chapter{系统功能模块划分}
+
+\section{功能需求分析}
+
+根据需求分析，系统可以划分为以下八个主要功能模块：
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \caption{系统功能模块划分}
+  \label{tab:modules}
+  \begin{tabularx}{\textwidth}{|p{2.5cm}|X|}
+    \hline
+    \textbf{模块代码} & \textbf{功能需求} \\
+    \hline
+    M1 基础数据管理 & 门店、桌游目录、桌位主数据及 URL 维护 \\
+    \hline
+    M2 桌位平面图 & 空闲/预约中/占用状态可视化展示 \\
+    \hline
+    M3 预约管理 & 新建预约、冲突检测、取消、列表查询 \\
+    \hline
+    M4 对局与计费 & 入场开台、现场开台、结算关台 \\
+    \hline
+    M5 战绩与排行 & 战绩写入、排行榜维护、聚合统计 \\
+    \hline
+    M6 统计报表 & 存储过程支撑收入、利用率等分析 \\
+    \hline
+    M7 智能桌游推荐 & 基于人数、时长、类型偏好、会员历史和热度输出推荐桌游 \\
+    \hline
+    M8 智能桌位调度 & 基于容量匹配、时段冲突和近期利用率输出推荐桌位 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{数据流图（DFD）分析}
+
+\subsection{0 层数据流图（上下文图）}
+
+0 层数据流图展示系统与外部实体的交互关系。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=0.9]
+    % 系统
+    \draw[fill=blue!20, draw=blue, thick] (2.5,1.4) rectangle (6.0,3.8)
+      node[midway, align=center] {\textbf{桌游预约与}\\\textbf{战绩系统}};
+
+    % 外部实体 - 文字放在圆圈外面，避免重叠
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.2,5.5) circle (0.4);
+    \node[anchor=east] at (-1.6,5.5) {\small 顾客};
+
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.2,2.6) circle (0.4);
+    \node[anchor=east] at (-1.6,2.6) {\small 会员};
+
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.2,-0.3) circle (0.4);
+    \node[anchor=east] at (-1.6,-0.3) {\small 管理员};
+
+    \draw[fill=yellow!20, draw=orange!80!black, thick] (7.5,2.2) rectangle (9.2,3.4) node[midway] {\small MySQL};
+
+    % 数据流
+    \draw[->, thick] (-0.8,5.5) -- (2.5,3.5) node[midway, above left] {\tiny 预约查询信息};
+    \draw[->, thick] (-0.8,2.6) -- (2.5,2.6) node[midway, above] {\tiny 预约与战绩请求};
+    \draw[->, thick] (-0.8,-0.3) -- (2.5,1.8) node[midway, above left] {\tiny 维护与报表指令};
+    \draw[->, thick] (6.0,3.5) -- (7.5,3.0) node[midway, above] {\tiny 数据持久化};
+    \draw[->, thick] (7.5,2.6) -- (6.0,2.2) node[midway, below] {\tiny 查询结果};
+    \draw[->, thick] (5.5,1.4) -- (3.2,0.3) node[midway, below] {\tiny 系统反馈};
+  \end{tikzpicture}
+  \caption{0 层数据流图（上下文图）}
+  \label{fig:dfd0}
+\end{figure}
+
+\subsection{1 层数据流图（功能分解）}
+
+1 层数据流图展示系统内部的主要加工与数据存储。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[scale=0.85]
+    % 外部实体 - 文字放在圆圈外面，避免重叠
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.5,7.5) circle (0.4);
+    \node[anchor=east] at (-2.0,7.5) {\small 顾客};
+
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.5,4.3) circle (0.4);
+    \node[anchor=east] at (-2.0,4.3) {\small 会员};
+
+    \draw[fill=green!20, draw=green!60!black, thick] (-1.5,-0.5) circle (0.4);
+    \node[anchor=east] at (-2.0,-0.5) {\small 管理员};
+
+    % 加工
+    \draw[fill=blue!20, draw=blue, thick] (2.5,6.7) rectangle (4.5,7.7) node[midway, font=\small] {1.0 预约};
+    \draw[fill=blue!20, draw=blue, thick] (2.5,5.0) rectangle (4.5,6.0) node[midway, font=\small] {2.0 开台};
+    \draw[fill=blue!20, draw=blue, thick] (2.5,3.2) rectangle (4.5,4.2) node[midway, font=\small] {3.0 结算};
+    \draw[fill=blue!20, draw=blue, thick] (2.5,1.4) rectangle (4.5,2.4) node[midway, font=\small] {4.0 战绩};
+    \draw[fill=blue!20, draw=blue, thick] (2.5,-0.4) rectangle (4.5,0.6) node[midway, font=\small] {5.0 统计};
+
+    % 数据存储
+    \draw[fill=yellow!20, draw=orange!80!black, thick] (6.0,6.7) rectangle (8.2,7.7) node[midway, font=\small] {D1 预约};
+    \draw[fill=yellow!20, draw=orange!80!black, thick] (6.0,5.0) rectangle (8.2,6.0) node[midway, font=\small] {D2 对局};
+    \draw[fill=yellow!20, draw=orange!80!black, thick] (6.0,3.2) rectangle (8.2,4.2) node[midway, font=\small] {D3 战绩};
+    \draw[fill=yellow!20, draw=orange!80!black, thick] (6.0,1.4) rectangle (8.2,2.4) node[midway, font=\small] {D4 排行};
+
+    % 数据流
+    \draw[->, thick] (-1.1,7.5) -- (2.5,7.2) node[midway, above, font=\tiny] {预约请求};
+    \draw[->, thick] (-1.1,4.3) -- (2.5,5.5) node[midway, above left, font=\tiny] {开台请求};
+    \draw[->, thick] (-1.1,-0.5) -- (2.5,0.1) node[midway, below, font=\tiny] {统计查询};
+    \draw[->, thick] (4.5,7.2) -- (6.0,7.2) node[midway, above, font=\tiny] {预约写入};
+    \draw[<- , thick] (4.5,6.95) -- (6.0,6.95) node[midway, below, font=\tiny] {预约读取};
+    \draw[->, thick] (4.5,5.5) -- (6.0,5.5) node[midway, above, font=\tiny] {对局写入};
+    \draw[<- , thick] (4.5,5.25) -- (6.0,5.25) node[midway, below, font=\tiny] {对局读取};
+    \draw[->, thick] (4.5,3.7) -- (6.0,3.7) node[midway, above, font=\tiny] {战绩写入};
+    \draw[<- , thick] (4.5,3.45) -- (6.0,3.45) node[midway, below, font=\tiny] {战绩读取};
+    \draw[->, thick] (4.5,1.9) -- (6.0,1.9) node[midway, above, font=\tiny] {排行更新};
+    \draw[<- , thick] (4.5,1.65) -- (6.0,1.65) node[midway, below, font=\tiny] {排行读取};
+  \end{tikzpicture}
+  \caption{1 层数据流图（功能分解）}
+  \label{fig:dfd1}
+\end{figure}
+
+\section{软件功能模块图}
+
+系统采用自顶向下的模块划分方式，如图 \ref{fig:module_tree} 所示。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[
+    level distance=1.2cm,
+    sibling distance=1.8cm,
+    every node/.style={draw, rounded rectangle, minimum width=1.6cm, minimum height=0.5cm, font=\small},
+    level 1/.style={sibling distance=2.5cm},
+    level 2/.style={sibling distance=1.5cm}
+  ]
+    \node[fill=blue!30] {桌游运营系统}
+      child {node[fill=cyan!30] {M1 基础数据}
+        child {node[fill=cyan!20] {门店/目录/桌位}}
+      }
+      child {node[fill=cyan!30] {M2 平面图}
+        child {node[fill=cyan!20] {状态着色}}
+      }
+      child {node[fill=cyan!30] {M3 预约}
+        child {node[fill=cyan!20] {新建/取消/列表}}
+      }
+      child {node[fill=cyan!30] {M4 对局计费}
+        child {node[fill=cyan!20] {入场/开台/结算}}
+      }
+      child {node[fill=cyan!30] {M5 战绩排行}
+        child {node[fill=cyan!20] {录入/排行榜}}
+      }
+      child {node[fill=cyan!30] {M6 统计报表}
+        child {node[fill=cyan!20] {存储过程}}
+      }
+      child {node[fill=cyan!30] {M7 智能推荐}
+        child {node[fill=cyan!20] {游戏/桌位评分}}
+      }
+      child {node[fill=cyan!30] {M8 调度优化}
+        child {node[fill=cyan!20] {容量/冲突检测}}
+      };
+  \end{tikzpicture}%
+  }
+  \caption{软件功能模块树}
+  \label{fig:module_tree}
+\end{figure}
+
+\section{模块间的数据依赖关系}
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \caption{模块间数据依赖关系}
+  \label{tab:module_deps}
+  \begin{tabularx}{\textwidth}{|p{2.5cm}|X|}
+    \hline
+    \textbf{模块} & \textbf{依赖关系} \\
+    \hline
+    M1 基础数据 & 无依赖（基础模块） \\
+    \hline
+    M2 平面图 & 依赖 M1（需要桌位信息） \\
+    \hline
+    M3 预约 & 依赖 M1、M2（需要桌位和状态） \\
+    \hline
+    M4 对局计费 & 依赖 M1、M3（需要桌位和预约） \\
+    \hline
+    M5 战绩排行 & 依赖 M1、M4（需要游戏和对局） \\
+    \hline
+    M6 统计报表 & 依赖 M1、M3、M4、M5（综合查询） \\
+    \hline
+    M7 智能桌游推荐 & 依赖 M1、M5、M6（目录特征、历史战绩、近期热度） \\
+    \hline
+    M8 智能桌位调度 & 依赖 M1、M2、M3、M4（容量、状态、预约冲突、利用率） \\
+    \hline
+  \end{tabularx}
+\end{table}

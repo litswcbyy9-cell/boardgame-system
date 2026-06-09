@@ -1,0 +1,32 @@
+\input{preamble}
+
+\begin{document}
+
+% 封面
+\input{chapters/00_cover}
+
+% 前言部分
+\frontmatter
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+\listoftables
+\clearpage
+
+% 正文部分
+\mainmatter
+\input{chapters/01_intro}
+\input{chapters/02_modules}
+\input{chapters/03_er}
+\input{chapters/04_logical}
+\input{chapters/05_impl}
+\input{chapters/06_summary}
+\input{chapters/07_refs}
+\input{chapters/08_thanks}
+
+% 附录
+\appendix
+\input{appendix/sql_scripts}
+
+\end{document}

@@ -1,0 +1,187 @@
+\chapter{总结}
+
+\section{与预期目标的符合情况}
+
+本课程设计实现了选题预定的 \textbf{预约—对局—结算—战绩—排行} 主线，并进一步加入 \textbf{智能桌游推荐与桌位调度优化}，与预期目标 \textbf{相符}。
+
+\subsection{目标达成情况}
+
+\begin{enumerate}
+  \item \textbf{需求分析}：完整分析了系统的功能需求和非功能需求
+  \item \textbf{概念设计}：绘制了 5 个局部 E-R 图和 1 个全局 E-R 图
+  \item \textbf{逻辑设计}：设计了 11 个关系模式，满足 3NF 规范
+  \item \textbf{物理实现}：编写了完整的 SQL 脚本，包含表、视图、触发器、存储过程
+  \item \textbf{前端实现}：实现了完整的用户界面和交互功能
+  \item \textbf{后端实现}：实现了 RESTful API 和数据库连接
+  \item \textbf{智能算法}：实现了可解释的混合推荐评分模型和桌位调度评分模型
+\end{enumerate}
+
+\section{系统特点}
+
+本系统设计具有以下特点：
+
+\subsection{库内对象齐全}
+
+\begin{enumerate}
+  \item 12 个数据表，覆盖所有业务实体、员工档案、后台账号和登录会话
+  \item 4 个触发器，维护数据一致性
+  \item 12 个存储过程，实现核心业务逻辑、预约超时处理与智能推荐
+  \item 5 个视图，提供便捷的数据查询和推荐特征聚合
+  \item 多个索引，优化查询性能
+  \item 完整的权限脚本，演示分级权限控制
+\end{enumerate}
+
+\subsection{业务逻辑下沉}
+
+\begin{enumerate}
+  \item 将桌位占用/释放状态维护通过触发器实现
+  \item 将会员排行聚合通过触发器和存储过程实现
+  \item 将预约冲突检测通过存储过程实现
+  \item 将超时未到店预约通过存储过程和后端定时任务自动关闭
+  \item 减轻应用层负担，提升系统可靠性
+\end{enumerate}
+
+\subsection{历史可追溯}
+
+\begin{enumerate}
+  \item 通过 \code{title\_snapshot} 字段记录战绩时的游戏名称
+  \item 避免游戏目录改名破坏历史语义
+  \item 支持完整的审计追踪
+\end{enumerate}
+
+\subsection{智能化辅助决策}
+
+\begin{enumerate}
+  \item 通过 \code{v\_game\_recommendation\_features} 聚合游戏热度和推荐特征
+  \item 通过 \code{sp\_recommend\_games} 输出桌游 Top 推荐和分项评分
+  \item 通过 \code{sp\_recommend\_tables} 过滤时段冲突并推荐合适桌位
+  \item 前端展示推荐分数和推荐理由，使系统从记录型管理升级为决策辅助型系统
+\end{enumerate}
+
+\subsection{规范化设计}
+
+\begin{enumerate}
+  \item 遵循 3NF 规范，消除数据冗余
+  \item 在必要处允许受控冗余以提升性能
+  \item 清晰的表间关系和外键约束
+\end{enumerate}
+
+\subsection{易于扩展}
+
+\begin{enumerate}
+  \item 架构清晰，易于添加新的功能模块
+  \item 存储过程和视图易于修改和扩展
+  \item 前后端分离，便于独立开发和测试
+\end{enumerate}
+
+\section{存在的问题与有待提高之处}
+
+\subsection{功能层面}
+
+\begin{enumerate}
+  \item \textbf{预约码与扫码入场}：可在预约成功后生成唯一预约码或二维码，顾客到店扫码后由系统自动核验预约状态、时间窗口和桌位容量，并触发入场开台流程
+  \item \textbf{消息通知}：缺少预约提醒、战绩通知等功能
+  \item \textbf{多人队伍}：目前战绩只支持单人胜者，不支持多人队伍
+  \item \textbf{多局计分}：目前每个对局只能录入一条战绩，不支持多局计分
+\end{enumerate}
+
+\subsection{性能层面}
+
+\begin{enumerate}
+  \item \textbf{缓存机制}：可以添加 Redis 缓存提升查询性能
+  \item \textbf{查询优化}：某些复杂查询可以进一步优化
+  \item \textbf{批量操作}：可以优化大批量数据导入的性能
+\end{enumerate}
+
+\subsection{安全层面}
+
+\begin{enumerate}
+  \item \textbf{权限细分}：目前已实现账号登录认证，但角色权限仍可继续细分到不同菜单和操作级别
+  \item \textbf{数据加密}：敏感数据（如电话号码）可以加密存储
+  \item \textbf{审计日志}：可以添加更详细的操作审计日志
+\end{enumerate}
+
+\subsection{运维层面}
+
+\begin{enumerate}
+  \item \textbf{服务器部署}：若投入真实运营，需要配置稳定服务器、域名、HTTPS 和反向代理
+  \item \textbf{环境与存储}：需要独立管理环境变量，并使用持久化数据库存储
+  \item \textbf{备份恢复}：需要建立完整的备份和恢复流程
+  \item \textbf{监控告警}：需要添加数据库监控和告警机制
+  \item \textbf{版本管理}：需要建立数据库版本管理和迁移流程
+\end{enumerate}
+
+\section{经验与收获}
+
+\subsection{理论层面}
+
+通过本次设计，深入理解了以下数据库设计理论：
+
+\begin{enumerate}
+  \item \textbf{E-R 模型}：学会了如何用 E-R 图表达复杂的业务关系
+  \item \textbf{关系模式}：掌握了 E-R 模型向关系模式的转换规则
+  \item \textbf{规范化}：理解了 1NF、2NF、3NF 的含义和应用
+  \item \textbf{完整性约束}：学会了如何通过约束保证数据一致性
+\end{enumerate}
+
+\subsection{实践层面}
+
+通过本次设计，获得了以下实践经验：
+
+\begin{enumerate}
+  \item \textbf{需求分析}：学会了如何从业务需求出发进行系统设计
+  \item \textbf{数据库设计}：掌握了完整的数据库设计流程
+  \item \textbf{SQL 编程}：学会了编写复杂的 SQL 语句和存储过程
+  \item \textbf{系统集成}：理解了前后端与数据库的集成方式
+\end{enumerate}
+
+\subsection{工程实践}
+
+通过本次设计，培养了以下工程实践能力：
+
+\begin{enumerate}
+  \item \textbf{文档编写}：学会了编写规范的技术文档
+  \item \textbf{代码规范}：理解了代码注释和命名规范的重要性
+  \item \textbf{版本管理}：学会了使用 Git 进行版本控制
+  \item \textbf{系统思维}：培养了从整体角度思考系统设计的能力
+\end{enumerate}
+
+\subsection{主要收获}
+
+\begin{enumerate}
+  \item 认识到 \textbf{基数与联系} 画清楚后，外键与过程边界自然清晰
+  \item 体会到 \textbf{文档符号规范} 与 \textbf{实现命名一致} 对团队协作与验收的重要性
+  \item 理解了 \textbf{业务逻辑下沉} 到数据库层的优势和权衡
+  \item 学会了如何在 \textbf{规范化} 与 \textbf{性能} 之间找到平衡点
+  \item 认识到 \textbf{推荐算法} 可以与数据库视图、存储过程结合，形成可解释、可演示的智能功能
+\end{enumerate}
+
+\section{改进建议}
+
+\subsection{短期改进}
+
+\begin{enumerate}
+  \item 继续细化不同员工角色的菜单权限和操作权限
+  \item 增加预约提醒、迟到提醒和取消通知
+  \item 完善错误提示和异常操作审计
+  \item 进一步优化移动端预约页面
+\end{enumerate}
+
+\subsection{中期改进}
+
+\begin{enumerate}
+  \item 支持多人队伍和多局计分
+  \item 添加消息通知功能
+  \item 实现数据缓存机制
+  \item 建立完整的备份恢复流程
+\end{enumerate}
+
+\subsection{长期改进}
+
+\begin{enumerate}
+  \item 支持多门店管理
+  \item 实现高级分析和报表功能
+  \item 引入大模型解释层，将推荐结果生成更自然的经营建议
+  \item 建立数据仓库和 BI 系统
+  \item 支持移动端应用
+\end{enumerate}

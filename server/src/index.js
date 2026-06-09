@@ -1,0 +1,1106 @@
+import express from 'express';
+import cors from 'cors';
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+import crypto from 'node:crypto';
+import { promisify } from 'node:util';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+dotenv.config();
+
+const app = express();
+const scryptAsync = promisify(crypto.scrypt);
+const SESSION_DAYS = 7;
+const RESERVATION_GRACE_MINUTES = Math.max(1, Math.min(180, Number(process.env.RESERVATION_GRACE_MINUTES || 15)));
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let expiringReservations = false;
+
+// 中间件
+app.use(cors());
+app.use(express.json());
+
+// 请求日志中间件
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+  });
+  next();
+});
+
+// 错误处理中间件
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err);
+  res.status(500).json({
+    error: 'internal_server_error',
+    message: '服务器内部错误，请稍后重试或查看后端日志',
+    description: err.message,
+  });
+});
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'boardgame',
+  password: process.env.DB_PASSWORD || 'boardgame',
+  database: process.env.DB_NAME || 'boardgame',
+  charset: 'utf8mb4',
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = await scryptAsync(password, salt, 64);
+  return `${salt}:${derived.toString('hex')}`;
+}
+
+async function verifyPassword(password, storedHash) {
+  const [salt, hash] = String(storedHash || '').split(':');
+  if (!salt || !hash) return false;
+  const derived = await scryptAsync(password, salt, 64);
+  const expected = Buffer.from(hash, 'hex');
+  return expected.length === derived.length && crypto.timingSafeEqual(expected, derived);
+}
+
+function authTokenFrom(req) {
+  const header = req.get('authorization') || '';
+  if (!header.startsWith('Bearer ')) return '';
+  return header.slice(7).trim();
+}
+
+function publicUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name ?? row.displayName,
+    role: row.role,
+    staffId: row.staff_id ?? row.staffId ?? null,
+    employeeNo: row.employee_no ?? row.employeeNo ?? null,
+    staffName: row.full_name ?? row.staffName ?? null,
+    staffPhone: row.staff_phone ?? row.staffPhone ?? null,
+    position: row.position ?? null,
+  };
+}
+
+async function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = hashToken(token);
+  await pool.query(
+    'INSERT INTO auth_sessions (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
+    [userId, tokenHash, SESSION_DAYS]
+  );
+  return token;
+}
+
+async function attachAuth(req, _res, next) {
+  const token = authTokenFrom(req);
+  if (!token) return next();
+  try {
+    const [[row]] = await pool.query(
+      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id,
+              sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
+       FROM auth_sessions s
+       INNER JOIN app_users u ON u.id = s.user_id
+       LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
+       WHERE s.token_hash = ? AND s.expires_at > NOW() AND u.status = 'active'
+       LIMIT 1`,
+      [hashToken(token)]
+    );
+    req.user = publicUser(row);
+  } catch (error) {
+    console.error('[WARN] auth attach failed:', error);
+  }
+  next();
+}
+
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    return sendError(res, 401, 'unauthorized');
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user) return sendError(res, 401, 'unauthorized');
+  if (req.user.role !== 'admin') return sendError(res, 403, 'forbidden');
+  next();
+}
+
+app.use(attachAuth);
+
+async function callReserve(tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query(
+      'CALL sp_reserve_table(?, ?, ?, ?, ?, ?, ?, @out_rid, @out_err)',
+      [tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd]
+    );
+    const [[row]] = await conn.query('SELECT @out_rid AS reservationId, @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+async function callCheckin(reservationId) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_checkin_start_session(?, @out_sid, @out_err)', [reservationId]);
+    const [[row]] = await conn.query('SELECT @out_sid AS sessionId, @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+async function callWalkin(tableId, guestName, guestPhone, partySize) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_start_walkin_session(?, ?, ?, ?, @out_sid, @out_err)', [tableId, guestName, guestPhone, partySize]);
+    const [[row]] = await conn.query('SELECT @out_sid AS sessionId, @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+async function expireOverdueReservations({ silent = false } = {}) {
+  if (expiringReservations) return 0;
+  expiringReservations = true;
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_expire_overdue_reservations(?, @out_expired_count)', [RESERVATION_GRACE_MINUTES]);
+    const [[row]] = await conn.query('SELECT @out_expired_count AS expiredCount');
+    const count = Number(row?.expiredCount || 0);
+    if (count > 0) {
+      console.log(`[INFO] expired ${count} overdue reservations after ${RESERVATION_GRACE_MINUTES} minute grace`);
+    }
+    return count;
+  } catch (error) {
+    if (!silent) throw error;
+    console.error('[WARN] expire overdue reservations failed:', error.message);
+    return 0;
+  } finally {
+    conn.release();
+    expiringReservations = false;
+  }
+}
+
+async function callSettle(sessionId, billedMinutes, amountCents, notes) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_end_session_settle(?, ?, ?, ?, @out_err)', [
+      sessionId,
+      billedMinutes,
+      amountCents,
+      notes ?? null,
+    ]);
+    const [[row]] = await conn.query('SELECT @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+async function callGameRecord(sessionId, gameId, winnerPlayerId, winnerDisplayName, scoreJson) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_insert_game_record(?, ?, ?, ?, ?, @out_rid, @out_err)', [
+      sessionId,
+      gameId,
+      winnerPlayerId ?? null,
+      winnerDisplayName ?? null,
+      scoreJson == null ? null : JSON.stringify(scoreJson),
+    ]);
+    const [[row]] = await conn.query('SELECT @out_rid AS recordId, @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+async function callCancelReservation(reservationId) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('CALL sp_cancel_reservation(?, @out_err)', [reservationId]);
+    const [[row]] = await conn.query('SELECT @out_err AS errCode');
+    return row;
+  } finally {
+    conn.release();
+  }
+}
+
+function toPositiveInt(value, fallback, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(max, Math.round(n));
+}
+
+function toMysqlDatetime(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
+}
+
+function parseDateInput(value, fallback) {
+  if (!value) return fallback;
+  const normalized = String(value).trim().replace(' ', 'T');
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildGameReason(row, query) {
+  const parts = [];
+  const peopleScore = Number(row.people_score || 0);
+  const durationScore = Number(row.duration_score || 0);
+  const historyScore = Number(row.history_score || 0);
+  const hotScore = Number(row.hot_score || 0);
+
+  if (peopleScore >= 90) parts.push(`适合 ${query.partySize} 人`);
+  else parts.push(`人数略有偏差但仍可安排`);
+  if (durationScore >= 80) parts.push(`时长接近 ${query.minutes} 分钟`);
+  if (query.category && row.category === query.category) parts.push(`匹配${row.category}偏好`);
+  if (historyScore >= 90) parts.push('会员历史记录高度匹配');
+  else if (historyScore >= 70) parts.push('会员曾偏好同类游戏');
+  if (hotScore >= 50) parts.push('近期热度较高');
+  if (!parts.length) parts.push('综合人数、时长和门店权重后排序靠前');
+  return `${parts.join('，')}。`;
+}
+
+function buildTableReason(row, partySize) {
+  const parts = [];
+  const capacityScore = Number(row.capacity_score || 0);
+  const availabilityScore = Number(row.availability_score || 0);
+  const utilizationScore = Number(row.utilization_score || 0);
+
+  if (capacityScore >= 90) parts.push(`容量适合 ${partySize} 人`);
+  else parts.push(`容量可接待 ${partySize} 人但不是最优`);
+  if (availabilityScore >= 95) parts.push('当前空闲');
+  else parts.push('该时段无冲突预约');
+  if (utilizationScore >= 80) parts.push('近期使用较均衡');
+  return `${parts.join('，')}。`;
+}
+
+const ERROR_MESSAGES = {
+    invalid_username: '账号只能包含字母、数字和下划线，长度 3-32 位',
+    weak_password: '密码至少 6 位',
+    username_exists: '账号已存在，请换一个账号名',
+    invalid_credentials: '账号或密码错误',
+    unauthorized: '请先登录后再操作',
+    forbidden: '当前账号没有执行该操作的权限',
+    database_error: '数据库操作失败，请检查数据库连接或稍后重试',
+    missing_staff_name: '员工姓名不能为空',
+    staff_not_found: '员工不存在或已停用',
+    employee_no_exists: '员工号已存在',
+    staff_has_account: '该员工已经绑定后台账号',
+    account_exists: '账号已存在，请换一个账号名',
+    invalid_member_id: '会员编号不合法',
+    missing_display_name: '会员姓名不能为空',
+    invalid_amount: '金额必须大于 0',
+    member_not_found: '会员不存在或已停用',
+    insufficient_balance: '会员不存在或余额不足',
+    invalid_player_id: '会员 ID 不合法',
+    invalid_time: '预约时间格式不合法',
+    invalid_time_range: '结束时间必须晚于开始时间',
+    missing_fields: '缺少必填字段，请补全后再提交',
+    invalid_guest_name: '访客名称不能为空',
+    invalid_party_size: '人数必须在 1 到 20 人之间',
+    missing_tableId: '缺少桌位 ID',
+    missing_gameId: '请选择要录入的桌游',
+    table_not_found: '桌位不存在',
+    table_occupied: '桌位正在占用中',
+    time_overlap: '该时间段已有预约',
+    capacity_exceeded: '预约人数超过该桌位容量，请选择更大桌位或包间',
+    reserved_slot_active: '当前时间段已有待入场预约',
+    no_table_available: '当前时间段没有容量合适的空闲桌位',
+    reservation_not_found: '预约记录不存在',
+    reservation_not_pending: '该预约不是待入场状态，不能入场',
+    reservation_not_cancellable: '该预约已入场、取消或完成，不能再取消',
+    session_not_open: '该对局不存在或已经结算，不能重复关台',
+    session_still_open: '该对局仍在进行中，请先结算关台再录入战绩',
+    game_not_found: '选择的桌游不存在',
+};
+
+function errorMessage(code, fallback = '操作失败，请检查输入后重试') {
+  return ERROR_MESSAGES[code] || fallback;
+}
+
+function sendError(res, status, code, fallback) {
+  const message = errorMessage(code, fallback);
+  return res.status(status).json({ error: code, message, description: message });
+}
+
+function reservationErrorMessage(code) {
+  return errorMessage(code, '预约失败，请检查桌位、人数和时间后重试');
+}
+
+async function recommendTableForReservation(partySize, reservedStart, reservedEnd) {
+  const [sets] = await pool.query('CALL sp_recommend_tables(?, ?, ?)', [partySize, reservedStart, reservedEnd]);
+  const row = (sets[0] || [])[0];
+  if (!row) return null;
+  return {
+    tableId: Number(row.table_id),
+    code: row.code,
+    seatCapacity: Number(row.seat_capacity),
+    areaType: row.area_type,
+  };
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password, displayName } = req.body || {};
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  const normalizedDisplayName = String(displayName || username || '').trim();
+
+  if (!/^[a-zA-Z0-9_]{3,32}$/.test(normalizedUsername)) {
+    return sendError(res, 400, 'invalid_username');
+  }
+  if (String(password || '').length < 6) {
+    return sendError(res, 400, 'weak_password');
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const passwordHash = await hashPassword(String(password));
+    const tempNo = `TMP${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const [staffResult] = await conn.query(
+      `INSERT INTO staff_profiles (employee_no, full_name, position, status, hired_at)
+       VALUES (?, ?, '店员', 'active', CURDATE())`,
+      [tempNo, normalizedDisplayName || normalizedUsername]
+    );
+    const employeeNo = `ST${new Date().getFullYear()}${String(staffResult.insertId).padStart(5, '0')}`;
+    await conn.query('UPDATE staff_profiles SET employee_no = ? WHERE id = ?', [employeeNo, staffResult.insertId]);
+    const [result] = await conn.query(
+      `INSERT INTO app_users (staff_id, username, display_name, password_hash, role)
+       VALUES (?, ?, ?, ?, 'staff')`,
+      [staffResult.insertId, normalizedUsername, normalizedDisplayName || normalizedUsername, passwordHash]
+    );
+    await conn.commit();
+    const token = await createSession(result.insertId);
+    const [[user]] = await pool.query(
+      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id,
+              sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
+       FROM app_users u
+       LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
+       WHERE u.id = ?`,
+      [result.insertId]
+    );
+    res.status(201).json({ token, user: publicUser(user) });
+  } catch (error) {
+    await conn.rollback();
+    if (error && error.code === 'ER_DUP_ENTRY') {
+      return sendError(res, 409, 'username_exists');
+    }
+    console.error('[ERROR] POST /api/auth/register:', error);
+    sendError(res, 500, 'database_error', String(error.message));
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  const [[row]] = await pool.query(
+    `SELECT u.id, u.username, u.display_name, u.password_hash, u.role, u.staff_id,
+            sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
+     FROM app_users u
+     LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
+     WHERE u.username = ? AND u.status = 'active'
+     LIMIT 1`,
+    [normalizedUsername]
+  );
+
+  if (!row || !(await verifyPassword(String(password || ''), row.password_hash))) {
+    return sendError(res, 401, 'invalid_credentials');
+  }
+
+  const token = await createSession(row.id);
+  res.json({ token, user: publicUser(row) });
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  res.json({ user: req.user || null });
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  const token = authTokenFrom(req);
+  if (token) {
+    await pool.query('DELETE FROM auth_sessions WHERE token_hash = ?', [hashToken(token)]);
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/staff', requireAuth, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const status = String(req.query.status || 'all');
+  const where = [];
+  const params = [];
+
+  if (q) {
+    where.push('(sp.full_name LIKE ? OR sp.phone LIKE ? OR sp.employee_no LIKE ? OR au.username LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (status === 'active' || status === 'disabled') {
+    where.push('sp.status = ?');
+    params.push(status);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT sp.id, sp.employee_no AS employeeNo, sp.full_name AS fullName, sp.phone,
+            sp.position, sp.status, sp.hired_at AS hiredAt, sp.created_at AS createdAt,
+            au.id AS userId, au.username, au.role, au.status AS userStatus
+     FROM staff_profiles sp
+     LEFT JOIN app_users au ON au.staff_id = sp.id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY sp.status ASC, sp.id DESC
+     LIMIT 300`,
+    params
+  );
+  res.json(rows);
+});
+
+app.post('/api/staff', requireAdmin, async (req, res) => {
+  const fullName = String(req.body?.fullName || '').trim();
+  const phone = req.body?.phone == null ? null : String(req.body.phone).trim() || null;
+  const position = String(req.body?.position || '店员').trim() || '店员';
+  const hiredAt = req.body?.hiredAt ? String(req.body.hiredAt).slice(0, 10) : null;
+  const requestedNo = req.body?.employeeNo == null ? '' : String(req.body.employeeNo).trim();
+
+  if (!fullName) return sendError(res, 400, 'missing_staff_name');
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const tempNo = requestedNo || `TMP${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const [result] = await conn.query(
+      `INSERT INTO staff_profiles (employee_no, full_name, phone, position, status, hired_at)
+       VALUES (?, ?, ?, ?, 'active', ?)`,
+      [tempNo, fullName, phone, position, hiredAt]
+    );
+    const employeeNo = requestedNo || `ST${new Date().getFullYear()}${String(result.insertId).padStart(5, '0')}`;
+    if (!requestedNo) {
+      await conn.query('UPDATE staff_profiles SET employee_no = ? WHERE id = ?', [employeeNo, result.insertId]);
+    }
+    await conn.commit();
+    res.status(201).json({ id: result.insertId, employeeNo });
+  } catch (error) {
+    await conn.rollback();
+    if (error && error.code === 'ER_DUP_ENTRY') return sendError(res, 409, 'employee_no_exists');
+    console.error('[ERROR] POST /api/staff:', error);
+    sendError(res, 500, 'database_error', String(error.message));
+  } finally {
+    conn.release();
+  }
+});
+
+app.patch('/api/staff/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const fullName = String(req.body?.fullName || '').trim();
+  const phone = req.body?.phone == null ? null : String(req.body.phone).trim() || null;
+  const position = String(req.body?.position || '店员').trim() || '店员';
+  const status = String(req.body?.status || 'active');
+  const hiredAt = req.body?.hiredAt ? String(req.body.hiredAt).slice(0, 10) : null;
+  const employeeNo = req.body?.employeeNo == null ? null : String(req.body.employeeNo).trim() || null;
+
+  if (!id) return sendError(res, 400, 'staff_not_found');
+  if (!fullName) return sendError(res, 400, 'missing_staff_name');
+  if (!['active', 'disabled'].includes(status)) return sendError(res, 400, 'staff_not_found');
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE staff_profiles
+       SET employee_no = COALESCE(?, employee_no), full_name = ?, phone = ?, position = ?, status = ?, hired_at = ?
+       WHERE id = ?`,
+      [employeeNo, fullName, phone, position, status, hiredAt, id]
+    );
+    if (result.affectedRows === 0) return sendError(res, 404, 'staff_not_found');
+    if (status === 'disabled') {
+      await pool.query(`UPDATE app_users SET status = 'disabled' WHERE staff_id = ?`, [id]);
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    if (error && error.code === 'ER_DUP_ENTRY') return sendError(res, 409, 'employee_no_exists');
+    console.error('[ERROR] PATCH /api/staff/:id:', error);
+    sendError(res, 500, 'database_error', String(error.message));
+  }
+});
+
+app.delete('/api/staff/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return sendError(res, 400, 'staff_not_found');
+  const [result] = await pool.query(`UPDATE staff_profiles SET status = 'disabled' WHERE id = ?`, [id]);
+  if (result.affectedRows === 0) return sendError(res, 404, 'staff_not_found');
+  await pool.query(`UPDATE app_users SET status = 'disabled' WHERE staff_id = ?`, [id]);
+  res.json({ ok: true });
+});
+
+app.post('/api/staff/:id/account', requireAdmin, async (req, res) => {
+  const staffId = Number(req.params.id);
+  const username = String(req.body?.username || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const role = req.body?.role === 'admin' ? 'admin' : 'staff';
+
+  if (!staffId) return sendError(res, 400, 'staff_not_found');
+  if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) return sendError(res, 400, 'invalid_username');
+  if (password.length < 6) return sendError(res, 400, 'weak_password');
+
+  try {
+    const [[staff]] = await pool.query(
+      'SELECT id, full_name FROM staff_profiles WHERE id = ? AND status = "active"',
+      [staffId]
+    );
+    if (!staff) return sendError(res, 404, 'staff_not_found');
+    const [[existing]] = await pool.query('SELECT id FROM app_users WHERE staff_id = ?', [staffId]);
+    if (existing) return sendError(res, 409, 'staff_has_account');
+
+    const passwordHash = await hashPassword(password);
+    const [result] = await pool.query(
+      `INSERT INTO app_users (staff_id, username, display_name, password_hash, role)
+       VALUES (?, ?, ?, ?, ?)`,
+      [staffId, username, staff.full_name, passwordHash, role]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    if (error && error.code === 'ER_DUP_ENTRY') return sendError(res, 409, 'account_exists');
+    console.error('[ERROR] POST /api/staff/:id/account:', error);
+    sendError(res, 500, 'database_error', String(error.message));
+  }
+});
+
+app.get('/api/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, db: true });
+  } catch (e) {
+    res.status(503).json({ ok: false, db: false, message: String(e.message) });
+  }
+});
+
+/** 平面图：视图 v_table_status_floor */
+app.get('/api/tables', async (_req, res) => {
+  await expireOverdueReservations({ silent: true });
+  const [rows] = await pool.query(
+    `SELECT f.table_id AS id, f.code, f.venue_id AS venueId, f.pos_x AS posX, f.pos_y AS posY, f.sort_order AS sortOrder,
+            f.seat_capacity AS seatCapacity, f.area_type AS areaType, f.floor_photo_url AS floorPhotoUrl,
+            f.status, f.current_reservation_id AS currentReservationId,
+            f.current_session_id AS currentSessionId,
+            r.player_id AS currentReservationPlayerId,
+            p.display_name AS currentReservationPlayerName,
+            p.phone AS currentReservationPlayerPhone,
+            r.guest_name AS currentReservationGuestName,
+            r.guest_phone AS currentReservationGuestPhone,
+            r.party_size AS currentReservationPartySize,
+            r.reserved_start AS currentReservationStart,
+            r.reserved_end AS currentReservationEnd,
+            r.status AS currentReservationStatus,
+            s.reservation_id AS currentSessionReservationId,
+            s.guest_name AS currentSessionGuestName,
+            s.guest_phone AS currentSessionGuestPhone,
+            s.party_size AS currentSessionPartySize,
+            s.started_at AS currentSessionStartedAt,
+            sr.player_id AS currentSessionPlayerId,
+            sp.display_name AS currentSessionPlayerName,
+            sp.phone AS currentSessionPlayerPhone
+     FROM v_table_status_floor f
+     LEFT JOIN reservations r ON r.id = f.current_reservation_id
+     LEFT JOIN players p ON p.id = r.player_id
+     LEFT JOIN play_sessions s ON s.id = f.current_session_id AND s.ended_at IS NULL
+     LEFT JOIN reservations sr ON sr.id = s.reservation_id
+     LEFT JOIN players sp ON sp.id = sr.player_id
+     ORDER BY f.sort_order`
+  );
+  res.json(rows);
+});
+
+app.get('/api/games', async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
+            min_players AS minPlayers, max_players AS maxPlayers, category,
+            difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
+            recommend_weight AS recommendWeight
+     FROM games ORDER BY id`
+  );
+  res.json(rows);
+});
+
+app.get('/api/players', async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id, member_no AS memberNo, display_name AS displayName, phone, avatar_url AS avatarUrl,
+            balance_cents AS balanceCents, total_recharged_cents AS totalRechargedCents,
+            total_spent_cents AS totalSpentCents, status
+     FROM players
+     WHERE status = 'active'
+     ORDER BY id LIMIT 800`
+  );
+  res.json(rows);
+});
+
+app.get('/api/members', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const status = String(req.query.status || 'all');
+  const where = [];
+  const params = [];
+
+  if (q) {
+    where.push('(display_name LIKE ? OR phone LIKE ? OR member_no LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (status === 'active' || status === 'disabled') {
+    where.push('status = ?');
+    params.push(status);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT id, member_no AS memberNo, display_name AS displayName, phone, avatar_url AS avatarUrl,
+            balance_cents AS balanceCents, total_recharged_cents AS totalRechargedCents,
+            total_spent_cents AS totalSpentCents, status, created_at AS createdAt
+     FROM players
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY status ASC, id DESC
+     LIMIT 300`,
+    params
+  );
+  res.json(rows);
+});
+
+app.get('/api/members/:id/reservations', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return sendError(res, 400, 'invalid_member_id');
+
+  const [rows] = await pool.query(
+    `SELECT r.id, r.table_id AS tableId, t.code AS tableCode,
+            t.seat_capacity AS seatCapacity, t.area_type AS areaType,
+            r.player_id AS playerId, p.display_name AS playerName, p.phone AS playerPhone,
+            r.guest_name AS guestName, r.guest_phone AS guestPhone, r.party_size AS partySize,
+            r.reserved_start AS reservedStart, r.reserved_end AS reservedEnd,
+            r.status, r.created_at AS createdAt
+     FROM reservations r
+     INNER JOIN game_tables t ON t.id = r.table_id
+     LEFT JOIN players p ON p.id = r.player_id
+     WHERE r.player_id = ?
+     ORDER BY r.reserved_start DESC
+     LIMIT 80`,
+    [id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/members', requireAuth, async (req, res) => {
+  const displayName = String(req.body?.displayName || '').trim();
+  const phone = req.body?.phone == null ? null : String(req.body.phone).trim();
+  const avatarUrl = req.body?.avatarUrl == null ? null : String(req.body.avatarUrl).trim();
+  const initialBalanceCents = Math.max(0, Math.round(Number(req.body?.initialBalanceYuan || 0) * 100));
+
+  if (!displayName) {
+    return sendError(res, 400, 'missing_display_name');
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [result] = await conn.query(
+      `INSERT INTO players (display_name, phone, avatar_url, balance_cents, total_recharged_cents)
+       VALUES (?, ?, ?, ?, ?)`,
+      [displayName, phone || null, avatarUrl || null, initialBalanceCents, initialBalanceCents]
+    );
+    const id = result.insertId;
+    const memberNo = `MB${new Date().getFullYear()}${String(id).padStart(5, '0')}`;
+    await conn.query('UPDATE players SET member_no = ? WHERE id = ?', [memberNo, id]);
+    await conn.commit();
+    res.status(201).json({ id, memberNo });
+  } catch (e) {
+    await conn.rollback();
+    sendError(res, 500, 'database_error', String(e.message));
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/members/:id/recharge', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const amountCents = Math.round(Number(req.body?.amountYuan || 0) * 100);
+  if (!id || amountCents <= 0) {
+    return sendError(res, 400, 'invalid_amount');
+  }
+  const [result] = await pool.query(
+    `UPDATE players
+     SET balance_cents = balance_cents + ?, total_recharged_cents = total_recharged_cents + ?
+     WHERE id = ? AND status = 'active'`,
+    [amountCents, amountCents, id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, 'member_not_found');
+  res.json({ ok: true });
+});
+
+app.post('/api/members/:id/consume', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const amountCents = Math.round(Number(req.body?.amountYuan || 0) * 100);
+  if (!id || amountCents <= 0) {
+    return sendError(res, 400, 'invalid_amount');
+  }
+  const [result] = await pool.query(
+    `UPDATE players
+     SET balance_cents = balance_cents - ?, total_spent_cents = total_spent_cents + ?
+     WHERE id = ? AND status = 'active' AND balance_cents >= ?`,
+    [amountCents, amountCents, id, amountCents]
+  );
+  if (result.affectedRows === 0) {
+    return sendError(res, 409, 'insufficient_balance');
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/members/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const [result] = await pool.query(`UPDATE players SET status = 'disabled' WHERE id = ?`, [id]);
+  if (result.affectedRows === 0) return sendError(res, 404, 'member_not_found');
+  res.json({ ok: true });
+});
+
+app.get('/api/leaderboard', async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT player_id AS playerId, display_name AS displayName, avatar_url AS avatarUrl,
+            wins, games, win_rate AS winRate, last_win_at AS lastWinAt
+     FROM v_leaderboard
+     ORDER BY win_rate DESC, wins DESC, games DESC
+     LIMIT 50`
+  );
+  res.json(rows);
+});
+
+app.get('/api/venue', async (_req, res) => {
+  const [[row]] = await pool.query(
+    `SELECT id, name, address, logo_url AS logoUrl FROM venues ORDER BY id LIMIT 1`
+  );
+  res.json(row || null);
+});
+
+app.get('/api/recommendations/games', async (req, res) => {
+  const playerId = req.query.playerId ? Number(req.query.playerId) : null;
+  const partySize = toPositiveInt(req.query.partySize, 4, 20);
+  const minutes = toPositiveInt(req.query.minutes, 120, 600);
+  const category = String(req.query.category || '').trim();
+
+  if (req.query.playerId && (!Number.isFinite(playerId) || playerId <= 0)) {
+    return sendError(res, 400, 'invalid_player_id');
+  }
+
+  const [sets] = await pool.query('CALL sp_recommend_games(?, ?, ?, ?)', [playerId, partySize, minutes, category]);
+  const rows = sets[0] || [];
+  res.json(
+    rows.map((row) => ({
+      gameId: row.game_id,
+      title: row.title,
+      coverImageUrl: row.cover_image_url,
+      minPlayers: row.min_players,
+      maxPlayers: row.max_players,
+      category: row.category,
+      difficultyLevel: row.difficulty_level,
+      avgMinutes: row.avg_minutes,
+      totalPlayRecords: row.total_play_records,
+      recent30Records: row.recent_30_records,
+      score: Number(row.score),
+      scores: {
+        people: Number(row.people_score),
+        duration: Number(row.duration_score),
+        category: Number(row.category_score),
+        history: Number(row.history_score),
+        hot: Number(row.hot_score),
+        weight: Number(row.weight_score),
+      },
+      reason: buildGameReason(row, { partySize, minutes, category }),
+    }))
+  );
+});
+
+app.get('/api/recommendations/tables', async (req, res) => {
+  const partySize = toPositiveInt(req.query.partySize, 4, 20);
+  const now = new Date();
+  const startDate = parseDateInput(req.query.startAt, now);
+  const endDate = parseDateInput(req.query.endAt, new Date(startDate ? startDate.getTime() + 2 * 3600000 : now.getTime() + 2 * 3600000));
+
+  if (!startDate || !endDate) {
+    return sendError(res, 400, 'invalid_time');
+  }
+  if (startDate >= endDate) {
+    return sendError(res, 400, 'invalid_time_range');
+  }
+
+  const [sets] = await pool.query('CALL sp_recommend_tables(?, ?, ?)', [
+    partySize,
+    toMysqlDatetime(startDate),
+    toMysqlDatetime(endDate),
+  ]);
+  const rows = sets[0] || [];
+  res.json(
+    rows.map((row) => ({
+      tableId: row.table_id,
+      code: row.code,
+      seatCapacity: row.seat_capacity,
+      areaType: row.area_type,
+      posX: row.pos_x,
+      posY: row.pos_y,
+      status: row.status,
+      recentSessions: row.recent_sessions,
+      score: Number(row.score),
+      scores: {
+        capacity: Number(row.capacity_score),
+        availability: Number(row.availability_score),
+        utilization: Number(row.utilization_score),
+      },
+      reason: buildTableReason(row, partySize),
+    }))
+  );
+});
+
+app.get('/api/reports/revenue', async (req, res) => {
+  const d = req.query.date || new Date().toISOString().slice(0, 10);
+  const [sets] = await pool.query('CALL sp_report_daily_revenue(?)', [d]);
+  const rows = sets[0] || [];
+  res.json(rows[0] || null);
+});
+
+app.get('/api/reports/game-popularity', async (req, res) => {
+  const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+  const [sets] = await pool.query('CALL sp_report_game_popularity(?)', [days]);
+  res.json(sets[0] || []);
+});
+
+app.get('/api/reports/table-utilization', async (req, res) => {
+  const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+  const [sets] = await pool.query('CALL sp_report_table_utilization(?)', [days]);
+  res.json(sets[0] || []);
+});
+
+app.get('/api/reservations', async (_req, res) => {
+  await expireOverdueReservations({ silent: true });
+  const [rows] = await pool.query(
+    `SELECT r.id, r.table_id AS tableId, t.code AS tableCode, r.player_id AS playerId,
+            p.display_name AS playerName, p.phone AS playerPhone,
+            r.guest_name AS guestName, r.guest_phone AS guestPhone, r.party_size AS partySize,
+            r.reserved_start AS reservedStart, r.reserved_end AS reservedEnd, r.status
+     FROM reservations r
+     INNER JOIN game_tables t ON t.id = r.table_id
+     LEFT JOIN players p ON p.id = r.player_id
+     WHERE r.status IN ('pending', 'active')
+     ORDER BY r.reserved_start DESC LIMIT 200`
+  );
+  res.json(rows);
+});
+
+app.get('/api/sessions/open', async (_req, res) => {
+  await expireOverdueReservations({ silent: true });
+  const [rows] = await pool.query(
+    `SELECT s.id, s.table_id AS tableId, t.code AS tableCode, s.reservation_id AS reservationId,
+            s.guest_name AS guestName, s.guest_phone AS guestPhone, s.party_size AS partySize,
+            s.started_at AS startedAt, s.ended_at AS endedAt,
+            r.player_id AS playerId, p.display_name AS playerName, p.phone AS playerPhone
+     FROM play_sessions s
+     INNER JOIN game_tables t ON t.id = s.table_id
+     LEFT JOIN reservations r ON r.id = s.reservation_id
+     LEFT JOIN players p ON p.id = r.player_id
+     WHERE s.ended_at IS NULL
+     ORDER BY s.started_at DESC`
+  );
+  res.json(rows);
+});
+
+app.post('/api/public/reservations', async (req, res) => {
+  const { tableId, guestName, guestPhone, partySize, reservedStart, reservedEnd } = req.body || {};
+  const normalizedPartySize = Math.trunc(Number(partySize || 1));
+  const normalizedName = String(guestName || '').trim();
+  const normalizedPhone = guestPhone == null ? null : String(guestPhone).trim() || null;
+
+  if (!normalizedName || !reservedStart || !reservedEnd) {
+    return sendError(res, 400, 'missing_fields');
+  }
+  if (!Number.isFinite(normalizedPartySize) || normalizedPartySize < 1 || normalizedPartySize > 20) {
+    return sendError(res, 400, 'invalid_party_size');
+  }
+  if (new Date(reservedStart) >= new Date(reservedEnd)) {
+    return sendError(res, 400, 'invalid_time_range');
+  }
+
+  try {
+    const pickedTable = tableId
+      ? { tableId: Number(tableId), code: null, seatCapacity: null, areaType: null }
+      : await recommendTableForReservation(normalizedPartySize, reservedStart, reservedEnd);
+
+    if (!pickedTable) {
+      return sendError(res, 409, 'no_table_available');
+    }
+
+    const row = await callReserve(
+      pickedTable.tableId,
+      null,
+      normalizedName,
+      normalizedPhone,
+      normalizedPartySize,
+      reservedStart,
+      reservedEnd
+    );
+    if (row.errCode) {
+      return sendError(res, 409, row.errCode, reservationErrorMessage(row.errCode));
+    }
+
+    const [[table]] = await pool.query('SELECT id, code, seat_capacity AS seatCapacity, area_type AS areaType FROM game_tables WHERE id = ?', [pickedTable.tableId]);
+    res.status(201).json({
+      reservationId: Number(row.reservationId),
+      tableId: pickedTable.tableId,
+      tableCode: table?.code || pickedTable.code || null,
+      seatCapacity: table?.seatCapacity ?? pickedTable.seatCapacity,
+      areaType: table?.areaType || pickedTable.areaType || null,
+    });
+  } catch (e) {
+    console.error('[ERROR] POST /api/public/reservations:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+app.post('/api/reservations', requireAuth, async (req, res) => {
+  const { tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd } = req.body || {};
+  const normalizedPartySize = Math.trunc(Number(partySize || 1));
+
+  // 输入验证
+  if (!tableId || !guestName || !reservedStart || !reservedEnd) {
+    return sendError(res, 400, 'missing_fields');
+  }
+
+  if (typeof guestName !== 'string' || guestName.trim().length === 0) {
+    return sendError(res, 400, 'invalid_guest_name');
+  }
+
+  if (!Number.isFinite(normalizedPartySize) || normalizedPartySize < 1 || normalizedPartySize > 20) {
+    return sendError(res, 400, 'invalid_party_size');
+  }
+
+  if (new Date(reservedStart) >= new Date(reservedEnd)) {
+    return sendError(res, 400, 'invalid_time_range');
+  }
+
+  try {
+    const row = await callReserve(
+      Number(tableId),
+      playerId == null ? null : Number(playerId),
+      String(guestName).trim(),
+      guestPhone == null ? null : String(guestPhone).trim() || null,
+      normalizedPartySize,
+      reservedStart,
+      reservedEnd
+    );
+    if (row.errCode) {
+      return sendError(res, 409, row.errCode, reservationErrorMessage(row.errCode));
+    }
+    res.status(201).json({ reservationId: Number(row.reservationId) });
+  } catch (e) {
+    console.error('[ERROR] POST /api/reservations:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+app.post('/api/reservations/:id/checkin', requireAuth, async (req, res) => {
+  const row = await callCheckin(Number(req.params.id));
+  if (row.errCode) {
+    return sendError(res, 409, row.errCode);
+  }
+  res.json({ sessionId: Number(row.sessionId) });
+});
+
+app.post('/api/reservations/:id/cancel', requireAuth, async (req, res) => {
+  const row = await callCancelReservation(Number(req.params.id));
+  if (row.errCode) {
+    return sendError(res, 409, row.errCode);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/sessions/walkin', requireAuth, async (req, res) => {
+  const { tableId, guestName, guestPhone, partySize } = req.body || {};
+  const normalizedPartySize = Math.trunc(Number(partySize || 1));
+  const normalizedGuestName = guestName == null ? null : String(guestName).trim() || null;
+  const normalizedGuestPhone = guestPhone == null ? null : String(guestPhone).trim() || null;
+  if (!tableId) {
+    return sendError(res, 400, 'missing_tableId');
+  }
+  if (!Number.isFinite(normalizedPartySize) || normalizedPartySize < 1 || normalizedPartySize > 20) {
+    return sendError(res, 400, 'invalid_party_size');
+  }
+  try {
+    const row = await callWalkin(Number(tableId), normalizedGuestName, normalizedGuestPhone, normalizedPartySize);
+    if (row.errCode) {
+      return sendError(res, 409, row.errCode, reservationErrorMessage(row.errCode));
+    }
+    res.status(201).json({ sessionId: Number(row.sessionId) });
+  } catch (e) {
+    console.error('[ERROR] POST /api/sessions/walkin:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
+  const billedMinutes = Number(req.body?.billedMinutes ?? 0);
+  const amountCents = Number(req.body?.amountCents ?? 0);
+  const notes = req.body?.notes ?? null;
+  const row = await callSettle(Number(req.params.id), billedMinutes, amountCents, notes);
+  if (row.errCode) {
+    return sendError(res, 409, row.errCode);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
+  const { gameId, winnerPlayerId, winnerDisplayName, scoreJson } = req.body || {};
+  if (!gameId) return sendError(res, 400, 'missing_gameId');
+  const row = await callGameRecord(
+    Number(req.params.id),
+    Number(gameId),
+    winnerPlayerId == null ? null : Number(winnerPlayerId),
+    winnerDisplayName == null ? null : String(winnerDisplayName),
+    scoreJson
+  );
+  if (row.errCode) {
+    return sendError(res, 409, row.errCode);
+  }
+  res.status(201).json({ recordId: Number(row.recordId) });
+});
+
+if (process.env.SERVE_WEB === '1') {
+  const webDist = path.resolve(__dirname, '../../web/dist');
+  app.use(express.static(webDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(webDist, 'index.html'));
+  });
+}
+
+const port = Number(process.env.PORT || 9898);
+const server = app.listen(port, () => {
+  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${port}`);
+  void expireOverdueReservations({ silent: true });
+  setInterval(() => {
+    void expireOverdueReservations({ silent: true });
+  }, 60_000).unref();
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+        `\n[server] 端口 ${port} 已被占用（常见：上次开的终端没关，或别的程序占用了该端口）。\n` +
+        `解决办法二选一：\n` +
+        `  1) 关掉所有正在跑 npm run dev 的黑窗口，再重新 npm run dev\n` +
+        `  2) Windows 查占用：netstat -ano | findstr :${port}  （把 ${port} 换成当前端口）\n` +
+        `     记下最后一列 PID，再执行：taskkill /PID 那一串数字 /F\n` +
+        `  3) 或改端口：在 server/.env 里写 PORT=8788\n`
+    );
+  } else {
+    console.error('[server] 启动失败:', err);
+  }
+  process.exit(1);
+});

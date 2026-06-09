@@ -1,0 +1,123 @@
+\chapter{系统功能模块划分}
+
+\section{功能需求分析}
+
+根据需求分析，系统可以划分为以下六个主要功能模块：
+
+\begin{table}[H]
+  \centering
+  \caption{系统功能模块划分}
+  \label{tab:modules}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{模块代码} & \textbf{功能需求} \\
+    \hline
+    M1 基础数据管理 & 门店、桌游目录、桌位主数据及 URL 维护 \\
+    \hline
+    M2 桌位平面图 & 空闲/预约中/占用状态可视化展示 \\
+    \hline
+    M3 预约管理 & 新建预约、冲突检测、取消、列表查询 \\
+    \hline
+    M4 对局与计费 & 入场开台、现场开台、结算关台 \\
+    \hline
+    M5 战绩与排行 & 战绩写入、排行榜维护、聚合统计 \\
+    \hline
+    M6 统计报表 & 存储过程支撑收入、利用率等分析 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{数据流图（DFD）分析}
+
+\subsection{0 层数据流图（上下文图）}
+
+0 层数据流图展示系统与外部实体的交互关系。系统接收来自顾客、会员和管理员的请求，与 MySQL 数据库进行交互，并返回相应的结果。
+
+主要数据流包括：
+\begin{itemize}
+  \item 顾客/会员：预约查询、预约/战绩操作
+  \item 管理员：维护与报表查询
+  \item 系统与数据库：持久化存储与查询
+\end{itemize}
+
+\subsection{1 层数据流图（功能分解）}
+
+1 层数据流图展示系统内部的主要加工与数据存储。系统分为五个主要加工模块：
+
+\begin{table}[H]
+  \centering
+  \caption{系统加工与数据存储}
+  \label{tab:dfd1}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{加工} & \textbf{说明} \\
+    \hline
+    1.0 预约处理 & 处理预约请求，检测冲突，维护预约状态 \\
+    \hline
+    2.0 开台 & 处理入场和现场开台，创建对局会话 \\
+    \hline
+    3.0 结算关台 & 处理对局结算，更新桌位状态 \\
+    \hline
+    4.0 战绩录入 & 录入战绩，更新排行榜 \\
+    \hline
+    5.0 统计查询 & 生成各类统计报表 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\begin{table}[H]
+  \centering
+  \caption{系统数据存储}
+  \label{tab:dfd1_data}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{数据存储} & \textbf{说明} \\
+    \hline
+    D1 预约与桌位状态 & 存储预约记录和桌位当前状态 \\
+    \hline
+    D2 对局与计费 & 存储对局会话和计费信息 \\
+    \hline
+    D3 战绩与游戏目录 & 存储战绩记录和游戏信息 \\
+    \hline
+    D4 会员与排行聚合 & 存储会员信息和排行榜数据 \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{软件功能模块图}
+
+系统采用自顶向下的模块划分方式。顶层是整个桌游运营系统，下一层分为六个主要功能模块：
+
+\begin{enumerate}
+  \item \textbf{M1 基础数据管理}：维护门店、桌游目录、桌位等基础信息
+  \item \textbf{M2 桌位平面图}：展示桌位的实时状态（空闲/预约/占用）
+  \item \textbf{M3 预约管理}：处理预约的创建、取消、查询等操作
+  \item \textbf{M4 对局与计费}：管理对局的开始、计时、结算
+  \item \textbf{M5 战绩与排行}：录入战绩，维护排行榜
+  \item \textbf{M6 统计报表}：生成收入、利用率等统计数据
+\end{enumerate}
+
+\section{模块间的数据依赖关系}
+
+\begin{table}[H]
+  \centering
+  \caption{模块间数据依赖关系}
+  \label{tab:module_deps}
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{模块} & \textbf{依赖关系} \\
+    \hline
+    M1 基础数据 & 无依赖（基础模块） \\
+    \hline
+    M2 平面图 & 依赖 M1（需要桌位信息） \\
+    \hline
+    M3 预约 & 依赖 M1、M2（需要桌位和状态） \\
+    \hline
+    M4 对局计费 & 依赖 M1、M3（需要桌位和预约） \\
+    \hline
+    M5 战绩排行 & 依赖 M1、M4（需要游戏和对局） \\
+    \hline
+    M6 统计报表 & 依赖 M1、M3、M4、M5（综合查询） \\
+    \hline
+  \end{tabularx}
+\end{table}

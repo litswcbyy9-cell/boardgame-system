@@ -1,0 +1,50 @@
+# 云端一键演示：Web(Nginx) + API(Node) + MySQL
+# 使用：在仓库根目录执行 docker compose -f deploy/docker-compose.yml up -d --build
+# 首次启动 MySQL 会执行 ../db/init 下全部 SQL（含大量测试数据，耗时略长）
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: boardgame
+      MYSQL_USER: boardgame
+      MYSQL_PASSWORD: boardgame
+    volumes:
+      - bg_mysql:/var/lib/mysql
+      - ../db/init:/docker-entrypoint-initdb.d:ro
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-proot']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: boardgame
+      DB_PASSWORD: boardgame
+      DB_NAME: boardgame
+      PORT: 9898
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - '9898'
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - '8080:80'
+    depends_on:
+      - api
+
+volumes:
+  bg_mysql:

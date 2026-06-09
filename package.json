@@ -1,0 +1,48 @@
+{
+  "name": "boardgame-system",
+  "version": "1.0.0",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "start:prod": "npm run build -w web && set SERVE_WEB=1&& npm run start -w server",
+    "desktop": "npm run build -w web && electron .",
+    "dist:win": "npm run build -w web && electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "com.dicecat.boardgameops",
+    "productName": "Dice Cat Boardgame Ops",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "server/**/*",
+      "web/dist/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "DiceCatBoardgameOps-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.15.2",
+    "wait-on": "^9.0.10"
+  }
+}

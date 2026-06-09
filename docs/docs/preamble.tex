@@ -1,0 +1,153 @@
+% ============================================================================
+% 导言区 - 桌游运营系统数据库设计文档
+% ============================================================================
+
+\documentclass[12pt,a4paper,openany]{ctexbook}
+
+% 页面设置
+\usepackage{geometry}
+\geometry{
+  a4paper,
+  top=2.0cm,
+  bottom=2.0cm,
+  left=2.2cm,
+  right=2.2cm,
+  headheight=1.2cm,
+  headsep=0.4cm,
+  footskip=0.8cm
+}
+
+% 行距
+\usepackage{setspace}
+\singlespacing
+
+% 表格间距优化
+\usepackage{booktabs}
+\renewcommand{\arraystretch}{1.0}
+
+% 字体配置 - 解决 SimSun 字体问题
+\setCJKmainfont[BoldFont=SimHei]{SimSun}
+\setCJKsansfont{SimHei}
+\setCJKmonofont{FangSong}
+
+% 段落间距
+\setlength{\parskip}{0.15em}
+\setlength{\parindent}{1.5em}
+
+% 数学支持
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+% 表格
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{tabularx}
+
+% 图表
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
+
+% TikZ 绘图
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning,calc,decorations.pathreplacing}
+
+% 代码高亮
+\usepackage{listings}
+\usepackage{xcolor}
+
+% 定义缺失的颜色
+\definecolor{lightblue}{RGB}{173,216,230}
+\definecolor{lightgreen}{RGB}{144,238,144}
+\definecolor{lightyellow}{RGB}{255,255,153}
+
+\lstset{
+  language=SQL,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{gray},
+  stringstyle=\color{red},
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  frame=single,
+  rulecolor=\color{black!30},
+  backgroundcolor=\color{gray!5},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  stepnumber=1,
+  tabsize=2,
+  captionpos=b,
+  escapechar=|,
+  prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
+  postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow\space}}
+}
+
+% 超链接
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue,
+  bookmarksnumbered=true
+}
+
+% 页眉页脚
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small 桌游桌位预约与战绩管理系统}
+\fancyhead[R]{\small 数据库设计与实现}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% 章节样式
+\ctexset{
+  chapter={
+    format=\Large\bfseries\centering,
+    number=\arabic{chapter},
+    name={第,章},
+    beforeskip=0.8cm,
+    afterskip=0.5cm
+  },
+  section={
+    format=\large\bfseries,
+    beforeskip=0.4cm,
+    afterskip=0.3cm
+  },
+  subsection={
+    format=\normalsize\bfseries,
+    beforeskip=0.3cm,
+    afterskip=0.2cm
+  }
+}
+
+% 目录深度
+\setcounter{tocdepth}{2}
+
+% 自定义命令
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\keyword}[1]{\textbf{#1}}
+
+% 定理环境
+\usepackage{amsthm}
+\theoremstyle{definition}
+\newtheorem{definition}{定义}[chapter]
+\newtheorem{example}{例}[chapter]
+\newtheorem{note}{注}[chapter]
+
+% 其他
+\usepackage{url}
+\usepackage{enumerate}
+\usepackage{enumitem}
+
+% 禁用章节编号的某些部分
+\newcommand{\nochapter}[1]{%
+  \chapter*{#1}%
+  \addcontentsline{toc}{chapter}{#1}%
+}
