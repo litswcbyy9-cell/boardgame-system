@@ -44,6 +44,8 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+// API 版本前缀兼容：/api/v1/* → /api/* 内部路径
+// 必须在 attachAuth / 路由处理之前执行，确保下游中间件看到统一路径
 app.use((req, _res, next) => {
   if (req.url === '/api/v1' || req.url.startsWith('/api/v1/')) {
     req.url = req.url.replace(/^\/api\/v1(?=\/|$)/, '/api');
@@ -425,12 +427,15 @@ function clientIp(req) {
 
 async function writeAuditLog(req, res) {
   const pathname = canonicalApiPath(req);
+  // TODO(多租户): tenant_id 目前为 NULL，多租户改造时从 req.tenant 或 JWT claim 中获取
+  const tenantId = req.tenant?.id || null;
   await pool.query(
     `INSERT INTO audit_logs
-      (user_id, action, resource_type, resource_id, request_method, request_path,
+      (tenant_id, user_id, action, resource_type, resource_id, request_method, request_path,
        status_code, ip, user_agent, request_body_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
       req.user?.id || null,
       `${req.method} ${pathname}`,
       auditResourceType(pathname),

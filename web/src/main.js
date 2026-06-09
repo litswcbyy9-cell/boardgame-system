@@ -1289,10 +1289,14 @@ function renderAuthScreen() {
             <span class="eyebrow">${isRegister ? 'Create Account' : 'Staff Login'}</span>
             <h2>${isRegister ? '注册员工账号' : '登录后台'}</h2>
           </div>
-          <div class="auth-tabs">
-            <button class="${!isRegister ? 'is-active' : ''}" data-auth-mode="login" type="button">登录</button>
-            ${ALLOW_PUBLIC_REGISTER ? `<button class="${isRegister ? 'is-active' : ''}" data-auth-mode="register" type="button">注册</button>` : ''}
-          </div>
+          ${
+            ALLOW_PUBLIC_REGISTER
+              ? `<div class="auth-tabs">
+                   <button class="${!isRegister ? 'is-active' : ''}" data-auth-mode="login" type="button">登录</button>
+                   <button class="${isRegister ? 'is-active' : ''}" data-auth-mode="register" type="button">注册</button>
+                 </div>`
+              : ''
+          }
           ${
             isRegister
               ? `<form class="auth-form">
