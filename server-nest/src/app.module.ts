@@ -10,8 +10,12 @@ import { ReservationsModule } from './modules/reservations/reservations.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
+import { MarketingModule } from './modules/marketing/marketing.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { AuditMiddleware } from './common/interceptors/audit.interceptor';
 import { RequestIdMiddleware } from './common/interceptors/request-id.interceptor';
+import { TenantMiddleware } from './common/middleware/tenant.middleware';
+import { TenantService } from './common/services/tenant.service';
 
 @Module({
   imports: [
@@ -26,10 +30,22 @@ import { RequestIdMiddleware } from './common/interceptors/request-id.intercepto
     SessionsModule,
     ReportsModule,
     RecommendationsModule,
+    MarketingModule,
+    BillingModule,
   ],
+  providers: [TenantService],
 })
 export class AppModule implements NestModule {
+  constructor(private tenantService: TenantService) {}
+
+  async onModuleInit() {
+    // 初始化默认租户
+    await this.tenantService.createDefaultTenant();
+  }
+
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware, AuditMiddleware).forRoutes('*');
+    consumer.apply(TenantMiddleware, RequestIdMiddleware, AuditMiddleware).forRoutes('*');
   }
 }
+
+

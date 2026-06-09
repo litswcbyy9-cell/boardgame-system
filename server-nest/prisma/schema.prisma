@@ -8,17 +8,76 @@ datasource db {
 }
 
 // ============================================================
+// 租户/品牌方
+// ============================================================
+model Tenant {
+  id        Int      @id @default(autoincrement()) @db.UnsignedInt
+  name      String   @db.VarChar(120)
+  phone     String?  @db.VarChar(32)
+  planType  PlanType @default(free)
+  status    TenantStatus @default(trial)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  expiredAt DateTime? @map("expired_at")
+
+  venues            Venue[]
+  appUsers          AppUser[]
+  subscriptions     SubscriptionPlan[]
+  players           Player[]
+  coupons           Coupon[]
+  orders            Order[]
+
+  @@map("tenants")
+}
+
+enum PlanType {
+  free
+  basic
+  pro
+  enterprise
+}
+
+enum TenantStatus {
+  trial
+  active
+  suspended
+  expired
+}
+
+// ============================================================
+// 订阅方案
+// ============================================================
+model SubscriptionPlan {
+  id              Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId        Int      @map("tenant_id") @db.UnsignedInt
+  name            String   @db.VarChar(64)
+  pricePerMonth   Int      @map("price_per_month") @db.UnsignedInt
+  maxVenues       Int      @map("max_venues") @db.UnsignedInt
+  maxStaff        Int      @map("max_staff") @db.UnsignedInt
+  maxTables       Int      @map("max_tables") @db.UnsignedInt
+  features        Json     @db.Json
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("subscription_plans")
+}
+
+// ============================================================
 // 门店/场地
 // ============================================================
 model Venue {
   id        Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId  Int      @default(1) @map("tenant_id") @db.UnsignedInt
   name      String   @db.VarChar(120)
   address   String?  @db.VarChar(255)
   logoUrl   String?  @map("logo_url") @db.VarChar(512)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
 
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tables GameTable[]
+  orders Order[]
 
+  @@unique([tenantId, name])
   @@map("venues")
 }
 
@@ -50,18 +109,21 @@ enum StaffStatus {
 // ============================================================
 model AppUser {
   id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId     Int      @default(1) @map("tenant_id") @db.UnsignedInt
   staffId      Int?     @unique @map("staff_id") @db.UnsignedInt
-  username     String   @unique @db.VarChar(64)
+  username     String   @db.VarChar(64)
   displayName  String   @map("display_name") @db.VarChar(100)
   passwordHash String   @map("password_hash") @db.VarChar(255)
   role         UserRole @default(staff)
   status       UserStatus @default(active)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(0)
 
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   staff        StaffProfile? @relation(fields: [staffId], references: [id], onDelete: SetNull)
   authSessions AuthSession[]
   auditLogs    AuditLog[]
 
+  @@unique([tenantId, username])
   @@map("app_users")
 }
 
@@ -186,6 +248,7 @@ enum TableStatus {
 // ============================================================
 model Player {
   id                 Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId           Int      @default(1) @map("tenant_id") @db.UnsignedInt
   memberNo           String?  @unique @map("member_no") @db.VarChar(32)
   displayName        String   @map("display_name") @db.VarChar(100)
   phone              String?  @db.VarChar(32)
@@ -193,19 +256,62 @@ model Player {
   balanceCents       Int      @default(0) @map("balance_cents") @db.UnsignedInt
   totalRechargedCents Int     @default(0) @map("total_recharged_cents") @db.UnsignedInt
   totalSpentCents    Int      @default(0) @map("total_spent_cents") @db.UnsignedInt
+  membershipLevel    MembershipLevel @default(bronze)
+  points             Int      @default(0) @db.UnsignedInt
+  birthday           DateTime? @db.Date
   status             PlayerStatus @default(active)
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(0)
 
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   playerStats  PlayerStat?
   reservations Reservation[]
   gameRecords  GameRecord[]
+  pointsLogs   PointsLog[]
+  memberCoupons MemberCoupon[]
+  orders       Order[]
 
+  @@unique([tenantId, memberNo])
+  @@index([tenantId, status])
   @@map("players")
+}
+
+enum MembershipLevel {
+  bronze   // 注册
+  silver   // 500元
+  gold     // 2000元
+  platinum // 5000元
+  diamond  // 10000元
 }
 
 enum PlayerStatus {
   active
   disabled
+}
+
+// ============================================================
+// 积分流水
+// ============================================================
+model PointsLog {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  playerId    Int      @map("player_id") @db.UnsignedInt
+  tenantId    Int      @map("tenant_id") @db.UnsignedInt
+  points      Int      @db.Int  // 可正可负
+  description String   @db.VarChar(255)
+  type        PointsLogType @map("type")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("points_logs")
+}
+
+enum PointsLogType {
+  consume    // 消费得积分
+  sign_in    // 签到
+  redeem     // 兑换（扣积分）
+  admin      // 手工调整
 }
 
 // ============================================================
@@ -302,4 +408,121 @@ model GameRecord {
   @@index([gameId, playedAt])
   @@index([winnerPlayerId])
   @@map("game_records")
+}
+
+// ============================================================
+// 优惠券
+// ============================================================
+model Coupon {
+  id          Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId    Int      @map("tenant_id") @db.UnsignedInt
+  name        String   @db.VarChar(120)
+  type        CouponType
+  value       Int      @db.UnsignedInt  // 单位: 分（满减/折扣）
+  minAmount   Int      @default(0) @map("min_amount") @db.UnsignedInt  // 满X分才能用
+  totalQty    Int      @map("total_qty") @db.UnsignedInt  // 总量
+  usedQty     Int      @default(0) @map("used_qty") @db.UnsignedInt
+  startAt     DateTime @map("start_at")
+  endAt       DateTime @map("end_at")
+  validOn     CouponValidOn @map("valid_on")  // 工作日/周末/全时段
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  tenant          Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  memberCoupons   MemberCoupon[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, endAt])
+  @@map("coupons")
+}
+
+enum CouponType {
+  discount_fixed  // 满减 (满100减10)
+  discount_percent // 折扣 (8折)
+  newbie          // 新人券
+}
+
+enum CouponValidOn {
+  weekday
+  weekend
+  all
+}
+
+enum MemberCouponStatus {
+  unused
+  used
+  expired
+}
+
+// ============================================================
+// 会员领券
+// ============================================================
+model MemberCoupon {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  playerId  Int      @map("player_id") @db.UnsignedInt
+  couponId  Int      @map("coupon_id") @db.UnsignedInt
+  status    MemberCouponStatus @default(unused)
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, couponId])
+  @@index([playerId, status])
+  @@index([couponId, status])
+  @@map("member_coupons")
+}
+
+// ============================================================
+// 订单
+// ============================================================
+model Order {
+  id            Int      @id @default(autoincrement()) @db.UnsignedInt
+  tenantId      Int      @map("tenant_id") @db.UnsignedInt
+  venueId       Int      @map("venue_id") @db.UnsignedInt
+  playerId      Int?     @map("player_id") @db.UnsignedInt
+  orderNo       String   @unique @map("order_no") @db.VarChar(64)
+  amountCents   Int      @map("amount_cents") @db.UnsignedInt
+  discountCents Int      @default(0) @map("discount_cents") @db.UnsignedInt
+  finalCents    Int      @map("final_cents") @db.UnsignedInt  // 实际支付
+  status        OrderStatus @default(pending)
+  paidAt        DateTime? @map("paid_at")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  venue    Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  player   Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  items    OrderItem[]
+
+  @@unique([tenantId, orderNo])
+  @@index([tenantId, createdAt])
+  @@index([venueId, createdAt])
+  @@index([playerId, createdAt])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  pending     // 待支付
+  paid        // 已支付
+  cancelled   // 已取消
+  refunded    // 已退款
+}
+
+// ============================================================
+// 订单明细
+// ============================================================
+model OrderItem {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId     Int      @map("order_id") @db.UnsignedInt
+  sessionId   Int?     @map("session_id") @db.UnsignedInt  // 开台记录
+  gameId      Int?     @map("game_id") @db.UnsignedInt
+  description String   @db.VarChar(255)
+  quantity    Int      @default(1) @db.UnsignedInt
+  unitPrice   Int      @map("unit_price") @db.UnsignedInt  // 单位: 分
+  totalPrice  Int      @map("total_price") @db.UnsignedInt
+
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_items")
 }

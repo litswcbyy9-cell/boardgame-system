@@ -17,7 +17,12 @@ export class AuthService {
   async login(dto: LoginDto): Promise<LoginResponseDto> {
     const username = dto.username.trim().toLowerCase();
     const user = await this.prisma.appUser.findUnique({
-      where: { username },
+      where: {
+        tenantId_username: {
+          tenantId: 1, // 使用默认租户 ID
+          username,
+        }
+      },
       include: { staff: true },
     });
 
@@ -30,7 +35,7 @@ export class AuthService {
       throw new UnauthorizedException('账号或密码错误');
     }
 
-    const token = this.generateToken(user.id);
+    const token = this.generateToken(user.id, user.tenantId);
     return {
       token,
       user: this.serializeUser(user),
@@ -46,7 +51,14 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
     // 检查用户名唯一性
-    const existing = await this.prisma.appUser.findUnique({ where: { username } });
+    const existing = await this.prisma.appUser.findUnique({
+      where: {
+        tenantId_username: {
+          tenantId: 1, // 使用默认租户 ID
+          username,
+        }
+      },
+    });
     if (existing) throw new ConflictException('账号已存在，请换一个账号名');
 
     // 事务：创建员工档案 + 应用账号
@@ -70,6 +82,7 @@ export class AuthService {
 
       const appUser = await tx.appUser.create({
         data: {
+          tenantId: 1, // 使用默认租户 ID
           staffId: staff.id,
           username,
           displayName: dto.displayName || username,
@@ -82,7 +95,7 @@ export class AuthService {
       return appUser;
     });
 
-    const token = this.generateToken(result.id);
+    const token = this.generateToken(result.id, result.tenantId);
     return { token, user: this.serializeUser(result) };
   }
 
@@ -101,8 +114,8 @@ export class AuthService {
     return { ok: true };
   }
 
-  private generateToken(userId: number): string {
-    const payload = { sub: userId };
+  private generateToken(userId: number, tenantId: number): string {
+    const payload = { sub: userId, tenantId };
     return this.jwt.sign(payload);
   }
 

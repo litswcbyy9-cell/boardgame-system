@@ -5,7 +5,24 @@
       "Bash(latexmk -xelatex -interaction=nonstopmode -file-line-error thesis.tex)",
       "Read(//tmp/**)",
       "Bash(chmod +x /tmp/detailed_check.sh)",
-      "Bash(/tmp/detailed_check.sh)"
+      "Bash(/tmp/detailed_check.sh)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(npx prisma *)",
+      "Bash(npx nest *)",
+      "Bash(git rm *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:9898/api/health)",
+      "Bash(curl -s -X POST http://localhost:9898/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin\"}')",
+      "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame)",
+      "Bash(curl *)",
+      "Bash(chmod +x /tmp/test_phase2.sh)",
+      "Bash(bash /tmp/test_phase2.sh)",
+      "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame -e ' *)"
     ]
   }
 }
