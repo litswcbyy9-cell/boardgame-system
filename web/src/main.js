@@ -1699,35 +1699,31 @@ async function render() {
   const page = currentPageMeta();
   const venueName = state.venue?.name || '桌游门店';
   const pageContent = await renderPageContent(summary);
+  const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt';
   $('#app').innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand">
-          <img src="${escapeAttr(state.venue?.logoUrl || 'https://images.unsplash.com/photo-1521017432531-fbd92d768814?auto=format&fit=crop&w=160&q=80')}" alt="${escapeAttr(venueName)}标识" onerror="this.style.display='none'" />
-          <div><strong>${escapeHtml(venueName)}</strong><span>桌位预约与战绩管理</span></div>
-        </div>
+        <a class="brand" href="#/dashboard" data-page="dashboard">
+          <div class="brand-icon">🎲</div>
+        </a>
         <nav class="nav-list" aria-label="主导航">
           ${renderNav()}
         </nav>
-        <div class="sidebar-note"><span>当前模式</span><strong>${state.mode === 'live' ? '实时数据库' : state.mode === 'demo' ? '演示数据' : '连接中'}</strong></div>
+        <div class="sidebar-footer">
+          <span class="${healthClass()}" style="font-size:11px;display:block;text-align:center;padding:8px"><i></i>${escapeHtml(state.health)}</span>
+        </div>
       </aside>
       <main class="main" id="page-${escapeAttr(page.id)}">
         <header class="topbar">
-          <div>
-            <span class="eyebrow">${escapeHtml(page.eyebrow)}</span>
-            <h1>${escapeHtml(page.title)}</h1>
-            <p>${escapeHtml(page.description)}</p>
+          <div class="topbar-left">
+            ${hasOwnHeader ? '' : `<div class="topbar-title"><span class="eyebrow">${escapeHtml(page.eyebrow)}</span><h1>${escapeHtml(page.title)}</h1></div>`}
           </div>
-          <div class="top-actions top-summary">
-            <span class="${healthClass()}"><i></i>${escapeHtml(state.health)}</span>
-            <span class="user-pill">${escapeHtml(state.currentUser.staffName || state.currentUser.displayName || state.currentUser.username)} · ${escapeHtml(state.currentUser.employeeNo || '未绑定员工号')} · ${escapeHtml(state.currentUser.role)}</span>
-            <button class="icon-button" data-refresh type="button" aria-label="刷新数据" title="刷新数据"><span class="refresh-symbol"></span></button>
-            <button class="btn btn-ghost btn-sm" data-logout type="button">退出</button>
-            <div class="shift-card" aria-label="门店运行摘要">
-              <div><span>今日预约</span><strong>${state.reservations.filter((item) => item.status === 'pending').length}</strong></div>
-              <div><span>进行中</span><strong>${state.openSessions.length}</strong></div>
-              <div><span>推荐池</span><strong>${state.games.length}</strong></div>
-            </div>
+          <div class="topbar-right">
+            ${state.reservations.filter(r => r.status === 'pending').length > 0 ? `<span class="topbar-stat">${state.reservations.filter(r => r.status === 'pending').length} 待处理</span>` : ''}
+            ${state.openSessions.length > 0 ? `<span class="topbar-stat">${state.openSessions.length} 进行中</span>` : ''}
+            <span class="user-pill">${escapeHtml(state.currentUser.displayName || state.currentUser.username)}</span>
+            <button class="icon-btn" data-refresh title="刷新" style="font-size:14px">↻</button>
+            <button class="btn btn-ghost btn-sm" data-logout>退出</button>
           </div>
         </header>
         ${state.err ? `<div class="notice">${escapeHtml(state.err)}</div>` : ''}
