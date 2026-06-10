@@ -3,7 +3,7 @@ import { Table, Card, Row, Col, Statistic, Tag, Spin, message } from 'antd';
 import { UserOutlined, GiftOutlined, DollarOutlined, FireOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
-const levelColors = {
+const levelColors: Record<string, string> = {
   bronze: 'default',
   silver: 'silver',
   gold: 'gold',
@@ -11,7 +11,7 @@ const levelColors = {
   diamond: 'cyan',
 };
 
-const levelNames = {
+const levelNames: Record<string, string> = {
   bronze: '铜牌',
   silver: '银牌',
   gold: '金牌',
@@ -78,7 +78,7 @@ export const MemberManagementPage: React.FC = () => {
       title: '等级',
       dataIndex: 'membershipLevel',
       key: 'membershipLevel',
-      render: (level: string) => (
+      render: (level: any) => (
         <Tag color={levelColors[level] || 'default'}>
           {levelNames[level] || level}
         </Tag>

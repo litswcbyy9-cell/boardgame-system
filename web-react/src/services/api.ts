@@ -46,3 +46,5 @@ export function clearAuthToken() {
 export function getAuthToken(): string {
   return window.localStorage.getItem(AUTH_KEY) || '';
 }
+
+export default apiClient;

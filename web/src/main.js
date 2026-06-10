@@ -66,10 +66,27 @@ const navItems = [
     title: '收入与运营报表',
     description: '查看今日收入、桌位利用率和桌游热度排行。',
   },
+  {
+    id: 'coupons',
+    label: '优惠券',
+    icon: 'records',
+    eyebrow: 'Coupons',
+    title: '优惠券管理',
+    description: '创建、发放和追踪优惠券效果。',
+  },
+  {
+    id: 'billing',
+    label: '订单计费',
+    icon: 'records',
+    eyebrow: 'Billing',
+    title: '订单与计费',
+    description: '查看订单列表、收入统计和优惠分析。',
+  },
 ];
 
 const publicPageIds = new Set(['customer']);
-const pageIds = new Set([...navItems.map((item) => item.id), ...publicPageIds]);
+const navigateIds = new Set([...navItems.map((item) => item.id)]);
+const pageIds = new Set([...navigateIds, ...publicPageIds]);
 
 function pageFromHash() {
   const key = window.location.hash.replace(/^#\/?/, '').trim() || 'dashboard';
@@ -1468,6 +1485,230 @@ function renderPublicCustomerShell() {
     <div id="toast-host" class="toast-host"></div>`;
 }
 
+// =====================================================================
+// Phase 2: 优惠券管理页面
+// =====================================================================
+async function renderCouponsPage() {
+  const token = window.localStorage.getItem(AUTH_KEY) || '';
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  let couponsHtml = '<div class="page-placeholder"><p>加载中...</p></div>';
+
+  try {
+    const res = await fetch('/api/coupons-mgmt/list', { headers });
+    const data = await res.json();
+    const coupons = data.data || [];
+
+    couponsHtml = `
+      <div class="section">
+        <div class="section-actions">
+          <button class="btn btn-primary" id="btn-create-coupon">+ 创建优惠券</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>优惠值</th>
+                <th>最低消费</th>
+                <th>发放/总量</th>
+                <th>有效期</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${coupons.length === 0
+                ? '<tr><td colspan="6" class="empty">暂无优惠券</td></tr>'
+                : coupons.map(c => {
+                    const typeMap = { discount_fixed: '满减', discount_percent: '折扣', newbie: '新人券' };
+                    const val = c.type === 'discount_percent'
+                      ? `${(c.value / 100).toFixed(0)}%`
+                      : `¥${(c.value / 100).toFixed(2)}`;
+                    const start = new Date(c.startAt).toLocaleDateString('zh-CN');
+                    const end = new Date(c.endAt).toLocaleDateString('zh-CN');
+                    return `<tr>
+                      <td>${escapeHtml(c.name)}</td>
+                      <td><span class="badge">${typeMap[c.type] || c.type}</span></td>
+                      <td>${val}</td>
+                      <td>¥${(c.minAmount / 100).toFixed(2)}</td>
+                      <td>${c.usedQty}/${c.totalQty}</td>
+                      <td>${start} ~ ${end}</td>
+                    </tr>`;
+                  }).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (e) {
+    couponsHtml = '<div class="page-placeholder"><p>加载失败，请刷新重试</p></div>';
+  }
+
+  return `
+    <div class="page-header">
+      <div class="page-header-eyebrow">Coupons</div>
+      <h1>优惠券管理</h1>
+      <p class="page-header-desc">创建、发放和追踪优惠券效果</p>
+    </div>
+    ${couponsHtml}
+    <div id="coupon-modal" class="modal-overlay" style="display:none">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>创建优惠券</h3>
+          <button class="modal-close" id="btn-close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="coupon-form">
+            <div class="form-group">
+              <label>优惠券名称</label>
+              <input type="text" name="name" class="form-input" required placeholder="如：春节满100减15">
+            </div>
+            <div class="form-group">
+              <label>类型</label>
+              <select name="type" class="form-input" required>
+                <option value="discount_fixed">满减</option>
+                <option value="discount_percent">折扣（百分比）</option>
+                <option value="newbie">新人券</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>优惠值（满减：分 / 折扣：百分值如80=8折）</label>
+                <input type="number" name="value" class="form-input" required placeholder="1500">
+              </div>
+              <div class="form-group" style="flex:1">
+                <label>最低消费金额（分）</label>
+                <input type="number" name="minAmount" class="form-input" value="0">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>发放总量</label>
+                <input type="number" name="totalQty" class="form-input" required placeholder="100">
+              </div>
+              <div class="form-group" style="flex:1">
+                <label>使用限制</label>
+                <select name="validOn" class="form-input">
+                  <option value="all">全时段</option>
+                  <option value="weekday">工作日</option>
+                  <option value="weekend">周末</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>开始日期</label>
+                <input type="datetime-local" name="startAt" class="form-input" required>
+              </div>
+              <div class="form-group" style="flex:1">
+                <label>结束日期</label>
+                <input type="datetime-local" name="endAt" class="form-input" required>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btn-cancel-coupon">取消</button>
+          <button class="btn btn-primary" id="btn-save-coupon">保存</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// =====================================================================
+// Phase 2: 订单与计费页面
+// =====================================================================
+async function renderBillingPage() {
+  const token = window.localStorage.getItem(AUTH_KEY) || '';
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  let contentHtml = '<div class="page-placeholder"><p>加载中...</p></div>';
+
+  try {
+    const [statsRes, ordersRes] = await Promise.all([
+      fetch('/api/billing-mgmt/stats', { headers }),
+      fetch('/api/billing-mgmt/orders', { headers }),
+    ]);
+    const stats = await statsRes.json();
+    const ordersData = await ordersRes.json();
+    const orders = ordersData.data || [];
+
+    const statusMap = { pending: '待支付', paid: '已支付', cancelled: '已取消', refunded: '已退款' };
+    const paidCount = stats.paidOrders || 0;
+    const discountRate = (stats.totalRevenue || 0) > 0
+      ? ((stats.totalDiscount / ((stats.totalRevenue || 0) + (stats.totalDiscount || 0))) * 100).toFixed(1)
+      : '0';
+
+    contentHtml = `
+      <div class="metric-cards">
+        <div class="metric-card">
+          <div class="metric-card-value">${stats.totalOrders || 0}</div>
+          <div class="metric-card-label">总订单数</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-value" style="color:#52c41a">${paidCount}</div>
+          <div class="metric-card-label">已支付</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-value">¥${((stats.totalRevenue || 0) / 100).toFixed(2)}</div>
+          <div class="metric-card-label">总收入</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-card-value" style="color:#ff4d4f">¥${((stats.totalDiscount || 0) / 100).toFixed(2)}</div>
+          <div class="metric-card-label">总优惠</div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-header">
+          <h3>订单列表</h3>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>订单号</th>
+                <th>会员</th>
+                <th>原价</th>
+                <th>折扣</th>
+                <th>实付</th>
+                <th>状态</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${orders.length === 0
+                ? '<tr><td colspan="7" class="empty">暂无订单</td></tr>'
+                : orders.map(o => {
+                    const player = o.playerName || '散客';
+                    const statusColor = o.status === 'paid' ? 'color:#52c41a' : o.status === 'pending' ? 'color:#faad14' : '';
+                    return `<tr>
+                      <td><code>${escapeHtml(o.orderNo)}</code></td>
+                      <td>${escapeHtml(player)}</td>
+                      <td>¥${(o.amountCents / 100).toFixed(2)}</td>
+                      <td style="color:#ff4d4f">-¥${(o.discountCents / 100).toFixed(2)}</td>
+                      <td style="font-weight:600;color:#52c41a">¥${(o.finalCents / 100).toFixed(2)}</td>
+                      <td><span style="${statusColor}">${statusMap[o.status] || o.status}</span></td>
+                      <td>${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
+                    </tr>`;
+                  }).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (e) {
+    contentHtml = '<div class="page-placeholder"><p>加载失败，请刷新重试</p></div>';
+  }
+
+  return `
+    <div class="page-header">
+      <div class="page-header-eyebrow">Billing</div>
+      <h1>订单与计费</h1>
+      <p class="page-header-desc">查看订单列表、收入统计和优惠分析</p>
+    </div>
+    ${contentHtml}`;
+}
+
 function renderPageContent(summary) {
   if (state.activePage === 'tables') return renderTablesPage();
   if (state.activePage === 'members') return renderMembersPage();
@@ -1475,6 +1716,8 @@ function renderPageContent(summary) {
   if (state.activePage === 'recommend') return renderRecommendPage();
   if (state.activePage === 'sessions') return renderSessionsPage();
   if (state.activePage === 'reports') return renderReportsPage();
+  if (state.activePage === 'coupons') return renderCouponsPage();
+  if (state.activePage === 'billing') return renderBillingPage();
   return renderDashboardPage(summary);
 }
 
@@ -1644,6 +1887,24 @@ function bind() {
     })
   );
   root.querySelector('[data-customer-submit]')?.addEventListener('click', () => void onCustomerSubmit());
+  // Phase 2: coupon creation modal
+  $('#btn-create-coupon')?.addEventListener('click', () => {
+    const modal = $('#coupon-modal');
+    if (modal) modal.style.display = 'flex';
+  });
+  $('#btn-close-modal')?.addEventListener('click', () => {
+    const modal = $('#coupon-modal');
+    if (modal) modal.style.display = 'none';
+  });
+  $('#btn-cancel-coupon')?.addEventListener('click', () => {
+    const modal = $('#coupon-modal');
+    if (modal) modal.style.display = 'none';
+  });
+  $('#btn-save-coupon')?.addEventListener('click', () => void onCreateCoupon());
+  // Close modal on overlay click
+  $('#coupon-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'coupon-modal') e.target.style.display = 'none';
+  });
 }
 
 async function onLogin() {
@@ -2080,6 +2341,39 @@ async function onRecord() {
     await refresh();
   } catch (error) {
     showToast(error.message, 'err');
+  }
+}
+
+// Phase 2: 创建优惠券
+async function onCreateCoupon() {
+  const form = document.getElementById('coupon-form');
+  if (!form) return;
+  const fd = new FormData(form);
+  const name = fd.get('name')?.toString().trim();
+  const type = fd.get('type')?.toString();
+  const value = Number(fd.get('value'));
+  const minAmount = Number(fd.get('minAmount')) || 0;
+  const totalQty = Number(fd.get('totalQty'));
+  const startAt = fd.get('startAt')?.toString();
+  const endAt = fd.get('endAt')?.toString();
+  const validOn = fd.get('validOn')?.toString() || 'all';
+
+  if (!name || !type || !value || !totalQty || !startAt || !endAt) {
+    showToast('请填写完整信息', 'err');
+    return;
+  }
+
+  try {
+    await api('/api/coupons-mgmt/create', {
+      method: 'POST',
+      body: JSON.stringify({ name, type, value, minAmount, totalQty, startAt, endAt, validOn }),
+    });
+    showToast('优惠券创建成功');
+    $('#coupon-modal').style.display = 'none';
+    form.reset();
+    await refresh();
+  } catch (e) {
+    showToast(e.message, 'err');
   }
 }
 

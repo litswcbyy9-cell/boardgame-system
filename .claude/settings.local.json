@@ -23,7 +23,21 @@
       "Bash(chmod +x /tmp/test_phase2.sh)",
       "Bash(bash /tmp/test_phase2.sh)",
       "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame -e ' *)",
-      "Bash(python3 -c \"import sys, json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2, ensure_ascii=False\\)\\)\")"
+      "Bash(python3 -c \"import sys, json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2, ensure_ascii=False\\)\\)\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill)",
+      "Bash(pkill -9 node)",
+      "Bash(mysql -h 127.0.0.1 -u boardgame -pboardgame boardgame -e \"DESC venues;\")",
+      "Bash(mysql *)",
+      "Bash(pkill -f \"node --watch\")",
+      "Bash(PORT=8788 npm run dev)",
+      "Bash(pkill -f \"node.*src/index.js\")",
+      "Bash(nohup node --watch src/index.js)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 37100)",
+      "Bash(taskkill //F //PID 30380)",
+      "Bash(grep -n \"^}$\" web/src/main.js)"
     ]
   }
 }

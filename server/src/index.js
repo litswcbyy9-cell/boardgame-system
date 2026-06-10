@@ -1209,6 +1209,157 @@ app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
   res.status(201).json({ recordId: Number(row.recordId) });
 });
 
+// =====================================================================
+// Phase 2: 商业化闭环 - 会员管理、优惠券、订单
+// =====================================================================
+
+// 会员统计
+app.get('/api/members-mgmt/stats', requireAuth, async (_req, res) => {
+  try {
+    const [[result]] = await pool.query(`
+      SELECT
+        COUNT(*) as totalMembers,
+        SUM(CASE WHEN membershipLevel='bronze' THEN 1 ELSE 0 END) as bronze,
+        SUM(CASE WHEN membershipLevel='silver' THEN 1 ELSE 0 END) as silver,
+        SUM(CASE WHEN membershipLevel='gold' THEN 1 ELSE 0 END) as gold,
+        SUM(CASE WHEN membershipLevel='platinum' THEN 1 ELSE 0 END) as platinum,
+        SUM(CASE WHEN membershipLevel='diamond' THEN 1 ELSE 0 END) as diamond,
+        SUM(total_spent_cents) as totalSpent,
+        SUM(points) as totalPoints
+      FROM players
+      WHERE tenant_id = 1
+    `);
+    res.json({
+      totalMembers: result?.totalMembers || 0,
+      byLevel: {
+        bronze: result?.bronze || 0,
+        silver: result?.silver || 0,
+        gold: result?.gold || 0,
+        platinum: result?.platinum || 0,
+        diamond: result?.diamond || 0,
+      },
+      totalSpent: result?.totalSpent || 0,
+      avgSpent: result?.totalMembers > 0 ? Math.floor((result?.totalSpent || 0) / result.totalMembers) : 0,
+      totalPoints: result?.totalPoints || 0,
+    });
+  } catch (e) {
+    console.error('[ERROR] GET /api/members-mgmt/stats:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+// 会员列表
+app.get('/api/members-mgmt/list', requireAuth, async (req, res) => {
+  try {
+    const skip = Number(req.query.skip) || 0;
+    const take = Number(req.query.take) || 20;
+    const [rows] = await pool.query(`
+      SELECT id, member_no AS memberNo, display_name AS displayName, phone,
+             membershipLevel, points, total_spent_cents AS totalSpentCents,
+             balance_cents AS balanceCents, created_at AS createdAt
+      FROM players
+      WHERE tenant_id = 1
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `, [take, skip]);
+    res.json({ data: rows });
+  } catch (e) {
+    console.error('[ERROR] GET /api/members-mgmt/list:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+// 优惠券列表
+app.get('/api/coupons-mgmt/list', requireAuth, async (req, res) => {
+  try {
+    const skip = Number(req.query.skip) || 0;
+    const take = Number(req.query.take) || 20;
+    const [rows] = await pool.query(`
+      SELECT id, name, type, value, min_amount AS minAmount,
+             total_qty AS totalQty, used_qty AS usedQty,
+             start_at AS startAt, end_at AS endAt, valid_on AS validOn,
+             created_at AS createdAt
+      FROM coupons
+      WHERE tenant_id = 1
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `, [take, skip]);
+    res.json({ data: rows });
+  } catch (e) {
+    console.error('[ERROR] GET /api/coupons-mgmt/list:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+// 创建优惠券
+app.post('/api/coupons-mgmt/create', requireAuth, async (req, res) => {
+  try {
+    const { name, type, value, minAmount, totalQty, startAt, endAt, validOn } = req.body || {};
+    if (!name || !type || !value || !totalQty || !startAt || !endAt) {
+      return sendError(res, 400, 'missing_fields');
+    }
+    // Convert ISO 8601 to MySQL datetime format
+    const start = new Date(startAt).toISOString().slice(0, 19).replace('T', ' ');
+    const end = new Date(endAt).toISOString().slice(0, 19).replace('T', ' ');
+    const [result] = await pool.query(`
+      INSERT INTO coupons (tenant_id, name, type, value, min_amount, total_qty, start_at, end_at, valid_on)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [name, type, value, minAmount || 0, totalQty, start, end, validOn || 'all']);
+    res.status(201).json({ id: result.insertId });
+  } catch (e) {
+    console.error('[ERROR] POST /api/coupons-mgmt/create:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+// 订单统计
+app.get('/api/billing-mgmt/stats', requireAuth, async (_req, res) => {
+  try {
+    const [[result]] = await pool.query(`
+      SELECT
+        COUNT(*) as totalOrders,
+        SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END) as paidOrders,
+        SUM(CASE WHEN status='paid' THEN final_cents ELSE 0 END) as totalRevenue,
+        SUM(CASE WHEN status='paid' THEN discount_cents ELSE 0 END) as totalDiscount
+      FROM orders
+      WHERE tenant_id = 1
+    `);
+    res.json({
+      totalOrders: result?.totalOrders || 0,
+      paidOrders: result?.paidOrders || 0,
+      totalRevenue: result?.totalRevenue || 0,
+      totalDiscount: result?.totalDiscount || 0,
+      avgOrderValue: result?.paidOrders > 0 ? Math.floor((result?.totalRevenue || 0) / result.paidOrders) : 0,
+    });
+  } catch (e) {
+    console.error('[ERROR] GET /api/billing-mgmt/stats:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
+// 订单列表
+app.get('/api/billing-mgmt/orders', requireAuth, async (req, res) => {
+  try {
+    const skip = Number(req.query.skip) || 0;
+    const take = Number(req.query.take) || 20;
+    const [rows] = await pool.query(`
+      SELECT o.id, o.order_no AS orderNo, o.amount_cents AS amountCents,
+             o.discount_cents AS discountCents, o.final_cents AS finalCents,
+             o.status, o.created_at AS createdAt,
+             p.display_name AS playerName, p.phone AS playerPhone
+      FROM orders o
+      LEFT JOIN players p ON p.id = o.player_id
+      WHERE o.tenant_id = 1
+      ORDER BY o.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [take, skip]);
+    res.json({ data: rows });
+  } catch (e) {
+    console.error('[ERROR] GET /api/billing-mgmt/orders:', e);
+    sendError(res, 500, 'database_error', String(e.message));
+  }
+});
+
 if (process.env.SERVE_WEB === '1') {
   const webDist = path.resolve(__dirname, '../../web/dist');
   app.use(express.static(webDist));

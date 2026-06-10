@@ -4,13 +4,13 @@ import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 
-const couponTypeMap = {
+const couponTypeMap: Record<string, string> = {
   discount_fixed: '满减',
   discount_percent: '折扣',
   newbie: '新人券',
 };
 
-const couponTypeColors = {
+const couponTypeColors: Record<string, string> = {
   discount_fixed: 'blue',
   discount_percent: 'green',
   newbie: 'orange',
@@ -79,7 +79,7 @@ export const CouponManagementPage: React.FC = () => {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
-      render: (type: string) => (
+      render: (type: any) => (
         <Tag color={couponTypeColors[type] || 'default'}>{couponTypeMap[type] || type}</Tag>
       ),
     },
@@ -161,7 +161,7 @@ export const CouponManagementPage: React.FC = () => {
         onCancel={() => setIsModalVisible(false)}
         width={500}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreateCoupon}>
+        <Form form={form} layout="vertical" onFinish={(values: any) => handleCreateCoupon(values)}>
           <Form.Item label="优惠券名称" name="name" rules={[{ required: true }]}>
             <Input placeholder="如：春节满100减15" />
           </Form.Item>

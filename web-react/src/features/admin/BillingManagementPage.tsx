@@ -3,14 +3,14 @@ import { Table, Card, Row, Col, Statistic, Tag, Button, Spin, message } from 'an
 import { DollarOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
-const statusMap = {
+const statusMap: Record<string, string> = {
   pending: '待支付',
   paid: '已支付',
   cancelled: '已取消',
   refunded: '已退款',
 };
 
-const statusColors = {
+const statusColors: Record<string, string> = {
   pending: 'warning',
   paid: 'success',
   cancelled: 'default',
@@ -106,7 +106,7 @@ export const BillingManagementPage: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: string) => (
+      render: (status: any) => (
         <Tag color={statusColors[status] || 'default'}>{statusMap[status] || status}</Tag>
       ),
     },
