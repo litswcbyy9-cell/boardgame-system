@@ -1363,12 +1363,26 @@ app.post('/api/staff-mgmt/create', requireTenantAdmin, async (req, res) => {
 app.patch('/api/staff-mgmt/:id', requireTenantAdmin, async (req, res) => {
   try {
     const tid = tenantId(req);
+    const userId = Number(req.params.id);
+    // 禁止修改自己
+    if (req.user && req.user.id === userId) {
+      return sendError(res, 403, 'cannot_modify_self');
+    }
     const { role, status } = req.body||{};
+    // 如果要把管理员降为员工，检查是否还有其他启用的管理员
+    if (role === 'staff' && req.body.role === 'staff') {
+      const [[target]] = await pool.query('SELECT role FROM app_users WHERE id=? AND tenant_id=?', [userId, tid]);
+      if (target && target.role === 'admin') {
+        const [[{cnt}]] = await pool.query(
+          `SELECT COUNT(*) as cnt FROM app_users WHERE tenant_id=? AND role='admin' AND status='active' AND id!=?`, [tid, userId]);
+        if (cnt === 0) return sendError(res, 409, 'last_admin');
+      }
+    }
     const updates = [], params = [];
     if (role) { updates.push('role=?'); params.push(role); }
     if (status) { updates.push('status=?'); params.push(status); }
     if (!updates.length) return sendError(res, 400, 'no_fields');
-    params.push(Number(req.params.id), tid);
+    params.push(userId, tid);
     await pool.query(`UPDATE app_users SET ${updates.join(',')} WHERE id=? AND tenant_id=?`, params);
     res.json({ ok: true });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }

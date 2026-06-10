@@ -1604,21 +1604,24 @@ async function renderStaffAdminPage() {
         <table class="data-table">
           <thead><tr><th>员工</th><th>账号</th><th>角色</th><th>岗位</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
           <tbody>
-            ${staff.length === 0 ? '<tr><td colspan="7" class="empty">暂无员工</td></tr>' : staff.map(s => `
-              <tr>
-                <td><strong>${escapeHtml(s.fullName||s.displayName)}</strong><br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(s.employeeNo||'')}</span></td>
+            ${staff.length === 0 ? '<tr><td colspan="7" class="empty">暂无员工</td></tr>' : staff.map(s => {
+              const isMe = s.id === state.currentUser?.id;
+              return `
+              <tr style="${isMe ? 'background:var(--primary-soft)' : ''}">
+                <td><strong>${escapeHtml(s.fullName||s.displayName)}</strong>${isMe ? ' <span class="badge badge-blue">你</span>' : ''}<br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(s.employeeNo||'')}</span></td>
                 <td>${escapeHtml(s.username)}</td>
                 <td><span class="badge ${s.role==='admin'?'badge-blue':'badge-green'}">${s.role==='admin'?'管理员':'员工'}</span></td>
                 <td>${escapeHtml(s.position||'')}</td>
                 <td><span class="badge ${s.status==='active'?'badge-green':'badge-rose'}">${s.status==='active'?'启用':'禁用'}</span></td>
                 <td style="font-size:13px;color:var(--text-muted)">${new Date(s.createdAt).toLocaleDateString('zh-CN')}</td>
-                <td>
-                  <div class="action-group">
-                    <button class="icon-btn" data-toggle-role="${s.id}" data-current-role="${s.role}" title="切换角色">🔄</button>
-                    <button class="icon-btn ${s.status==='active'?'danger':''}" data-toggle-status="${s.id}" data-current-status="${s.status}" title="${s.status==='active'?'禁用':'启用'}">${s.status==='active'?'⏸':'▶'}</button>
-                  </div>
-                </td>
-              </tr>`).join('')}
+                <td>${isMe
+                  ? '<span style="font-size:12px;color:var(--text-soft)">当前账号</span>'
+                  : `<div class="action-group">
+                      <button class="icon-btn" data-toggle-role="${s.id}" data-current-role="${s.role}" title="切换角色">🔄</button>
+                      <button class="icon-btn ${s.status==='active'?'danger':''}" data-toggle-status="${s.id}" data-current-status="${s.status}" title="${s.status==='active'?'禁用':'启用'}">${s.status==='active'?'⏸':'▶'}</button>
+                    </div>`
+                }</td>
+              </tr>`;}).join('')}
           </tbody>
         </table>
       </div>
