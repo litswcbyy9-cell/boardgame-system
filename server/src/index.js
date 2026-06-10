@@ -1192,14 +1192,107 @@ app.post('/api/sessions/walkin', requireAuth, async (req, res) => {
 });
 
 app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
+  const tid = tenantId(req);
   const billedMinutes = Number(req.body?.billedMinutes ?? 0);
   const amountCents = Number(req.body?.amountCents ?? 0);
   const notes = req.body?.notes ?? null;
-  const row = await callSettle(Number(req.params.id), billedMinutes, amountCents, notes);
-  if (row.errCode) {
-    return sendError(res, 409, row.errCode);
+  const couponId = req.body?.couponId || null; // optional: apply a specific coupon
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1. Settle the session
+    const [settleRows] = await conn.query('CALL sp_end_session_settle(?, ?, ?, ?, @out_err)', [req.params.id, billedMinutes, amountCents, notes]);
+    const [[settleResult]] = await conn.query('SELECT @out_err AS errCode');
+    if (settleResult.errCode) {
+      await conn.rollback();
+      conn.release();
+      return sendError(res, 409, settleResult.errCode);
+    }
+
+    // 2. Find player from session's reservation + venue from table
+    const [[session]] = await conn.query(
+      `SELECT s.table_id, r.player_id, t.venue_id
+       FROM play_sessions s
+       LEFT JOIN reservations r ON r.id = s.reservation_id
+       INNER JOIN game_tables t ON t.id = s.table_id
+       WHERE s.id=? AND s.tenant_id=?`, [req.params.id, tid]);
+
+    const playerId = session?.player_id || null;
+    const venueId = session?.venue_id || 1;
+
+    // 3. Calculate member discount
+    let memberDiscount = 0;
+    if (playerId) {
+      const [[player]] = await conn.query(
+        'SELECT membershipLevel FROM players WHERE id=? AND tenant_id=?', [playerId, tid]);
+      if (player) {
+        const rates = { bronze: 10000, silver: 9700, gold: 9500, platinum: 9300, diamond: 9000 };
+        const rate = rates[player.membershipLevel] || 10000;
+        memberDiscount = Math.floor((amountCents * (10000 - rate)) / 10000);
+      }
+    }
+
+    // 4. Apply coupon if provided
+    let couponDiscount = 0, appliedCouponId = null;
+    if (couponId && playerId) {
+      const [[mc]] = await conn.query(
+        `SELECT mc.id, c.value, c.type, c.min_amount FROM member_coupons mc
+         INNER JOIN coupons c ON c.id=mc.coupon_id
+         WHERE mc.coupon_id=? AND mc.player_id=? AND mc.status='unused' AND c.tenant_id=?`, [couponId, playerId, tid]);
+      if (mc && amountCents >= mc.min_amount) {
+        couponDiscount = mc.type === 'discount_fixed' ? mc.value : Math.floor((amountCents * mc.value) / 10000);
+        appliedCouponId = couponId;
+        await conn.query('UPDATE member_coupons SET status=?, used_at=NOW() WHERE id=?', ['used', mc.id]);
+      }
+    }
+
+    const totalDiscount = memberDiscount + couponDiscount;
+    const finalAmount = Math.max(0, amountCents - totalDiscount);
+
+    // 5. Create order
+    const orderNo = `ORD-${Date.now()}-${String(req.params.id).padStart(4,'0')}`;
+    await conn.query(
+      `INSERT INTO orders (tenant_id, venue_id, player_id, order_no, amount_cents, discount_cents, final_cents, status, paid_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', NOW())`,
+      [tid, venueId, playerId, orderNo, amountCents, totalDiscount, finalAmount]);
+
+    // 6. Give points + update level
+    if (playerId) {
+      const pointsToAdd = Math.floor(finalAmount / 100);
+      if (pointsToAdd > 0) {
+        await conn.query('UPDATE players SET points=points+?, total_spent_cents=total_spent_cents+? WHERE id=? AND tenant_id=?',
+          [pointsToAdd, finalAmount, playerId, tid]);
+        await conn.query(
+          `INSERT INTO points_logs (player_id, tenant_id, points, description, type) VALUES (?, ?, ?, ?, 'consume')`,
+          [playerId, tid, pointsToAdd, `订单 ${orderNo} 消费 +${pointsToAdd}分`]);
+      }
+
+      // Auto-upgrade member level
+      const [[p]] = await conn.query('SELECT total_spent_cents FROM players WHERE id=?', [playerId]);
+      const spent = p?.total_spent_cents || 0;
+      let newLevel = 'bronze';
+      if (spent >= 1000000) newLevel = 'diamond';
+      else if (spent >= 500000) newLevel = 'platinum';
+      else if (spent >= 200000) newLevel = 'gold';
+      else if (spent >= 50000) newLevel = 'silver';
+
+      await conn.query('UPDATE players SET membershipLevel=? WHERE id=? AND membershipLevel!=?', [newLevel, playerId, newLevel]);
+    }
+
+    await conn.commit();
+    conn.release();
+    res.json({
+      ok: true,
+      order: { orderNo, amountCents, discountCents: totalDiscount, finalCents: finalAmount, memberDiscount, couponDiscount, pointsEarned: playerId ? Math.floor(finalAmount/100) : 0 }
+    });
+  } catch (e) {
+    await conn.rollback();
+    conn.release();
+    console.error('[ERROR] settle+order:', e);
+    sendError(res, 500, 'database_error', String(e.message));
   }
-  res.json({ ok: true });
 });
 
 app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
