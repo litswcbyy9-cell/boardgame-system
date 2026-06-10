@@ -37,7 +37,10 @@
       "Bash(netstat -ano)",
       "Bash(taskkill //F //PID 37100)",
       "Bash(taskkill //F //PID 30380)",
-      "Bash(grep -n \"^}$\" web/src/main.js)"
+      "Bash(grep -n \"^}$\" web/src/main.js)",
+      "Bash(node -c src/main.js)",
+      "Bash(SERVE_WEB=1 nohup node --watch src/index.js)",
+      "Bash(taskkill //F //PID 2328)"
     ]
   }
 }

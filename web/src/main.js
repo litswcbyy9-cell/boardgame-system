@@ -1709,15 +1709,15 @@ async function renderBillingPage() {
     ${contentHtml}`;
 }
 
-function renderPageContent(summary) {
+async function renderPageContent(summary) {
   if (state.activePage === 'tables') return renderTablesPage();
   if (state.activePage === 'members') return renderMembersPage();
   if (state.activePage === 'staff') return renderStaffManagementPage();
   if (state.activePage === 'recommend') return renderRecommendPage();
   if (state.activePage === 'sessions') return renderSessionsPage();
   if (state.activePage === 'reports') return renderReportsPage();
-  if (state.activePage === 'coupons') return renderCouponsPage();
-  if (state.activePage === 'billing') return renderBillingPage();
+  if (state.activePage === 'coupons') return await renderCouponsPage();
+  if (state.activePage === 'billing') return await renderBillingPage();
   return renderDashboardPage(summary);
 }
 
@@ -1733,7 +1733,7 @@ function navigateToPage(pageId) {
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
-function render() {
+async function render() {
   if (state.activePage === 'customer') {
     $('#app').innerHTML = renderPublicCustomerShell();
     bind();
@@ -1747,6 +1747,7 @@ function render() {
   const summary = counts();
   const page = currentPageMeta();
   const venueName = state.venue?.name || '桌游门店';
+  const pageContent = await renderPageContent(summary);
   $('#app').innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -1779,7 +1780,7 @@ function render() {
           </div>
         </header>
         ${state.err ? `<div class="notice">${escapeHtml(state.err)}</div>` : ''}
-        ${renderPageContent(summary)}
+        ${pageContent}
       </main>
     </div>`;
   bind();
