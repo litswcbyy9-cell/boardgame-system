@@ -124,6 +124,7 @@ function publicUser(row) {
     username: row.username,
     displayName: row.display_name ?? row.displayName,
     role: row.role,
+    tenantId: row.tenant_id ?? row.tenantId ?? 1,
     staffId: row.staff_id ?? row.staffId ?? null,
     employeeNo: row.employee_no ?? row.employeeNo ?? null,
     staffName: row.full_name ?? row.staffName ?? null,
@@ -147,7 +148,7 @@ async function attachAuth(req, _res, next) {
   if (!token) return next();
   try {
     const [[row]] = await pool.query(
-      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id,
+      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id, u.tenant_id,
               sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
        FROM auth_sessions s
        INNER JOIN app_users u ON u.id = s.user_id
@@ -170,11 +171,19 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireAdmin(req, res, next) {
+function requireTenantAdmin(req, res, next) {
   if (!req.user) return sendError(res, 401, 'unauthorized');
   if (req.user.role !== 'admin') return sendError(res, 403, 'forbidden');
   next();
 }
+
+// 获取当前请求的 tenant_id
+function tenantId(req) {
+  return req.user?.tenantId || 1;
+}
+
+app.use(attachAuth);
+app.use(auditSuccessfulWrites);
 
 app.use(attachAuth);
 app.use(auditSuccessfulWrites);
@@ -604,7 +613,7 @@ app.get('/api/staff', requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/staff', requireAdmin, async (req, res) => {
+app.post('/api/staff', requireTenantAdmin, async (req, res) => {
   const fullName = String(req.body?.fullName || '').trim();
   const phone = req.body?.phone == null ? null : String(req.body.phone).trim() || null;
   const position = String(req.body?.position || '店员').trim() || '店员';
@@ -638,7 +647,7 @@ app.post('/api/staff', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/staff/:id', requireAdmin, async (req, res) => {
+app.patch('/api/staff/:id', requireTenantAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const fullName = String(req.body?.fullName || '').trim();
   const phone = req.body?.phone == null ? null : String(req.body.phone).trim() || null;
@@ -670,7 +679,7 @@ app.patch('/api/staff/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/staff/:id', requireAdmin, async (req, res) => {
+app.delete('/api/staff/:id', requireTenantAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!id) return sendError(res, 400, 'staff_not_found');
   const [result] = await pool.query(`UPDATE staff_profiles SET status = 'disabled' WHERE id = ?`, [id]);
@@ -679,7 +688,7 @@ app.delete('/api/staff/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/staff/:id/account', requireAdmin, async (req, res) => {
+app.post('/api/staff/:id/account', requireTenantAdmin, async (req, res) => {
   const staffId = Number(req.params.id);
   const username = String(req.body?.username || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
@@ -1210,15 +1219,15 @@ app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
 });
 
 // =====================================================================
-// Phase 2: 商业化闭环 - 会员管理、优惠券、订单
+// Phase 2: 商业化闭环 API
 // =====================================================================
 
-// 会员统计
-app.get('/api/members-mgmt/stats', requireAuth, async (_req, res) => {
+// ---------- 会员管理 ----------
+app.get('/api/members-mgmt/stats', requireAuth, async (req, res) => {
   try {
+    const tid = tenantId(req);
     const [[result]] = await pool.query(`
-      SELECT
-        COUNT(*) as totalMembers,
+      SELECT COUNT(*) as totalMembers,
         SUM(CASE WHEN membershipLevel='bronze' THEN 1 ELSE 0 END) as bronze,
         SUM(CASE WHEN membershipLevel='silver' THEN 1 ELSE 0 END) as silver,
         SUM(CASE WHEN membershipLevel='gold' THEN 1 ELSE 0 END) as gold,
@@ -1226,138 +1235,224 @@ app.get('/api/members-mgmt/stats', requireAuth, async (_req, res) => {
         SUM(CASE WHEN membershipLevel='diamond' THEN 1 ELSE 0 END) as diamond,
         SUM(total_spent_cents) as totalSpent,
         SUM(points) as totalPoints
-      FROM players
-      WHERE tenant_id = 1
-    `);
+      FROM players WHERE tenant_id = ?
+    `, [tid]);
     res.json({
       totalMembers: result?.totalMembers || 0,
-      byLevel: {
-        bronze: result?.bronze || 0,
-        silver: result?.silver || 0,
-        gold: result?.gold || 0,
-        platinum: result?.platinum || 0,
-        diamond: result?.diamond || 0,
-      },
+      byLevel: { bronze: result?.bronze||0, silver: result?.silver||0, gold: result?.gold||0, platinum: result?.platinum||0, diamond: result?.diamond||0 },
       totalSpent: result?.totalSpent || 0,
-      avgSpent: result?.totalMembers > 0 ? Math.floor((result?.totalSpent || 0) / result.totalMembers) : 0,
+      avgSpent: result?.totalMembers > 0 ? Math.floor((result?.totalSpent||0)/result.totalMembers) : 0,
       totalPoints: result?.totalPoints || 0,
     });
-  } catch (e) {
-    console.error('[ERROR] GET /api/members-mgmt/stats:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-// 会员列表
 app.get('/api/members-mgmt/list', requireAuth, async (req, res) => {
   try {
-    const skip = Number(req.query.skip) || 0;
-    const take = Number(req.query.take) || 20;
-    const [rows] = await pool.query(`
-      SELECT id, member_no AS memberNo, display_name AS displayName, phone,
-             membershipLevel, points, total_spent_cents AS totalSpentCents,
-             balance_cents AS balanceCents, created_at AS createdAt
-      FROM players
-      WHERE tenant_id = 1
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `, [take, skip]);
+    const tid = tenantId(req);
+    const skip = Number(req.query.skip)||0, take = Number(req.query.take)||20;
+    const [rows] = await pool.query(
+      `SELECT id, member_no AS memberNo, display_name AS displayName, phone,
+              membershipLevel, points, total_spent_cents AS totalSpentCents,
+              balance_cents AS balanceCents, created_at AS createdAt
+       FROM players WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [tid, take, skip]);
     res.json({ data: rows });
-  } catch (e) {
-    console.error('[ERROR] GET /api/members-mgmt/list:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-// 优惠券列表
+// ---------- 优惠券管理 ----------
 app.get('/api/coupons-mgmt/list', requireAuth, async (req, res) => {
   try {
-    const skip = Number(req.query.skip) || 0;
-    const take = Number(req.query.take) || 20;
-    const [rows] = await pool.query(`
-      SELECT id, name, type, value, min_amount AS minAmount,
-             total_qty AS totalQty, used_qty AS usedQty,
-             start_at AS startAt, end_at AS endAt, valid_on AS validOn,
-             created_at AS createdAt
-      FROM coupons
-      WHERE tenant_id = 1
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `, [take, skip]);
+    const tid = tenantId(req);
+    const skip = Number(req.query.skip)||0, take = Number(req.query.take)||20;
+    const [rows] = await pool.query(
+      `SELECT id, name, type, value, min_amount AS minAmount, total_qty AS totalQty, used_qty AS usedQty,
+              start_at AS startAt, end_at AS endAt, valid_on AS validOn, created_at AS createdAt
+       FROM coupons WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [tid, take, skip]);
     res.json({ data: rows });
-  } catch (e) {
-    console.error('[ERROR] GET /api/coupons-mgmt/list:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-// 创建优惠券
 app.post('/api/coupons-mgmt/create', requireAuth, async (req, res) => {
   try {
-    const { name, type, value, minAmount, totalQty, startAt, endAt, validOn } = req.body || {};
-    if (!name || !type || !value || !totalQty || !startAt || !endAt) {
-      return sendError(res, 400, 'missing_fields');
-    }
-    // Convert ISO 8601 to MySQL datetime format
-    const start = new Date(startAt).toISOString().slice(0, 19).replace('T', ' ');
-    const end = new Date(endAt).toISOString().slice(0, 19).replace('T', ' ');
-    const [result] = await pool.query(`
-      INSERT INTO coupons (tenant_id, name, type, value, min_amount, total_qty, start_at, end_at, valid_on)
-      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [name, type, value, minAmount || 0, totalQty, start, end, validOn || 'all']);
-    res.status(201).json({ id: result.insertId });
-  } catch (e) {
-    console.error('[ERROR] POST /api/coupons-mgmt/create:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+    const tid = tenantId(req);
+    const { name, type, value, minAmount, totalQty, startAt, endAt, validOn } = req.body||{};
+    if (!name||!type||!value||!totalQty||!startAt||!endAt) return sendError(res, 400, 'missing');
+    const start = new Date(startAt).toISOString().slice(0,19).replace('T',' ');
+    const end = new Date(endAt).toISOString().slice(0,19).replace('T',' ');
+    const [r] = await pool.query(
+      `INSERT INTO coupons (tenant_id,name,type,value,min_amount,total_qty,start_at,end_at,valid_on) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [tid,name,type,value,minAmount||0,totalQty,start,end,validOn||'all']);
+    res.status(201).json({ id: r.insertId });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-// 订单统计
-app.get('/api/billing-mgmt/stats', requireAuth, async (_req, res) => {
+// ---------- 订单计费 ----------
+app.get('/api/billing-mgmt/stats', requireAuth, async (req, res) => {
   try {
-    const [[result]] = await pool.query(`
-      SELECT
-        COUNT(*) as totalOrders,
+    const tid = tenantId(req);
+    const [[r]] = await pool.query(
+      `SELECT COUNT(*) as totalOrders,
         SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END) as paidOrders,
         SUM(CASE WHEN status='paid' THEN final_cents ELSE 0 END) as totalRevenue,
         SUM(CASE WHEN status='paid' THEN discount_cents ELSE 0 END) as totalDiscount
-      FROM orders
-      WHERE tenant_id = 1
-    `);
+       FROM orders WHERE tenant_id = ?`, [tid]);
     res.json({
-      totalOrders: result?.totalOrders || 0,
-      paidOrders: result?.paidOrders || 0,
-      totalRevenue: result?.totalRevenue || 0,
-      totalDiscount: result?.totalDiscount || 0,
-      avgOrderValue: result?.paidOrders > 0 ? Math.floor((result?.totalRevenue || 0) / result.paidOrders) : 0,
+      totalOrders: r?.totalOrders||0, paidOrders: r?.paidOrders||0,
+      totalRevenue: r?.totalRevenue||0, totalDiscount: r?.totalDiscount||0,
+      avgOrderValue: r?.paidOrders>0 ? Math.floor((r?.totalRevenue||0)/r.paidOrders) : 0,
     });
-  } catch (e) {
-    console.error('[ERROR] GET /api/billing-mgmt/stats:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-// 订单列表
 app.get('/api/billing-mgmt/orders', requireAuth, async (req, res) => {
   try {
-    const skip = Number(req.query.skip) || 0;
-    const take = Number(req.query.take) || 20;
-    const [rows] = await pool.query(`
-      SELECT o.id, o.order_no AS orderNo, o.amount_cents AS amountCents,
-             o.discount_cents AS discountCents, o.final_cents AS finalCents,
-             o.status, o.created_at AS createdAt,
-             p.display_name AS playerName, p.phone AS playerPhone
-      FROM orders o
-      LEFT JOIN players p ON p.id = o.player_id
-      WHERE o.tenant_id = 1
-      ORDER BY o.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [take, skip]);
+    const tid = tenantId(req);
+    const skip = Number(req.query.skip)||0, take = Number(req.query.take)||20;
+    const [rows] = await pool.query(
+      `SELECT o.id, o.order_no AS orderNo, o.amount_cents AS amountCents, o.discount_cents AS discountCents,
+              o.final_cents AS finalCents, o.status, o.created_at AS createdAt,
+              p.display_name AS playerName, p.phone AS playerPhone
+       FROM orders o LEFT JOIN players p ON p.id=o.player_id
+       WHERE o.tenant_id = ? ORDER BY o.created_at DESC LIMIT ? OFFSET ?`,
+      [tid, take, skip]);
     res.json({ data: rows });
-  } catch (e) {
-    console.error('[ERROR] GET /api/billing-mgmt/orders:', e);
-    sendError(res, 500, 'database_error', String(e.message));
-  }
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+// ---------- 员工权限管理（租户管理员） ----------
+app.get('/api/staff-mgmt/list', requireTenantAdmin, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const [rows] = await pool.query(
+      `SELECT u.id, u.username, u.display_name AS displayName, u.role, u.status, u.created_at AS createdAt,
+              sp.employee_no AS employeeNo, sp.full_name AS fullName, sp.phone, sp.position, sp.status AS staffStatus
+       FROM app_users u
+       LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
+       WHERE u.tenant_id = ?
+       ORDER BY u.created_at DESC`, [tid]);
+    res.json({ data: rows });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.post('/api/staff-mgmt/create', requireTenantAdmin, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const { username, displayName, password, role, fullName, phone, position } = req.body||{};
+    if (!username||!displayName||!password) return sendError(res, 400, 'missing');
+    const passwordHash = await hashPassword(password);
+    const [[existing]] = await pool.query('SELECT id FROM app_users WHERE tenant_id=? AND username=?', [tid, username]);
+    if (existing) return sendError(res, 409, 'duplicate');
+
+    const [staffR] = await pool.query(
+      `INSERT INTO staff_profiles (employee_no, full_name, phone, position) VALUES (?,?,?,?)`,
+      [`TMP${Date.now()}`, fullName||displayName, phone||null, position||'店员']);
+    const staffId = staffR.insertId;
+    const empNo = `ST${new Date().getFullYear()}${String(staffId).padStart(5,'0')}`;
+    await pool.query('UPDATE staff_profiles SET employee_no=? WHERE id=?', [empNo, staffId]);
+
+    const [userR] = await pool.query(
+      `INSERT INTO app_users (tenant_id, staff_id, username, display_name, password_hash, role) VALUES (?,?,?,?,?,?)`,
+      [tid, staffId, username, displayName, passwordHash, role||'staff']);
+    res.status(201).json({ id: userR.insertId, employeeNo: empNo });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.patch('/api/staff-mgmt/:id', requireTenantAdmin, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const { role, status } = req.body||{};
+    const updates = [], params = [];
+    if (role) { updates.push('role=?'); params.push(role); }
+    if (status) { updates.push('status=?'); params.push(status); }
+    if (!updates.length) return sendError(res, 400, 'no_fields');
+    params.push(Number(req.params.id), tid);
+    await pool.query(`UPDATE app_users SET ${updates.join(',')} WHERE id=? AND tenant_id=?`, params);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+// ---------- 桌游目录管理 ----------
+app.get('/api/games-mgmt/list', requireAuth, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const search = req.query.search || '';
+    let query = `SELECT id, title, cover_image_url AS coverImageUrl, category,
+                        min_players AS minPlayers, max_players AS maxPlayers,
+                        difficulty_level AS difficulty, avg_minutes AS avgMinutes,
+                        description, publisher, publish_year AS publishYear, bgg_id AS bggId
+                 FROM games WHERE tenant_id = ?`;
+    const params = [tid];
+    if (search) { query += ' AND (title LIKE ? OR description LIKE ? OR category LIKE ?)'; params.push(`%${search}%`,`%${search}%`,`%${search}%`); }
+    query += ' ORDER BY created_at DESC';
+    const [rows] = await pool.query(query, params);
+    res.json({ data: rows });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.get('/api/games-mgmt/:id', requireAuth, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const [[row]] = await pool.query(
+      `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl, category,
+              min_players AS minPlayers, max_players AS maxPlayers, difficulty_level AS difficulty,
+              avg_minutes AS avgMinutes, description, publisher, publish_year AS publishYear,
+              bgg_id AS bggId, recommend_weight AS recommendWeight, created_at AS createdAt
+       FROM games WHERE id=? AND tenant_id=?`, [req.params.id, tid]);
+    if (!row) return sendError(res, 404, 'not_found');
+    res.json(row);
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.post('/api/games-mgmt/create', requireAuth, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const { title, coverImageUrl, rulesPdfUrl, category, minPlayers, maxPlayers, difficulty, avgMinutes, description, publisher, publishYear, bggId } = req.body||{};
+    if (!title) return sendError(res, 400, 'missing_title');
+    const [r] = await pool.query(
+      `INSERT INTO games (tenant_id,title,cover_image_url,rules_pdf_url,category,min_players,max_players,difficulty_level,avg_minutes,description,publisher,publish_year,bgg_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [tid, title, coverImageUrl||null, rulesPdfUrl||null, category||'综合', minPlayers||2, maxPlayers||6, difficulty||3, avgMinutes||90, description||null, publisher||null, publishYear||null, bggId||null]);
+    res.status(201).json({ id: r.insertId });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.patch('/api/games-mgmt/:id', requireAuth, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const fields = ['title','cover_image_url','rules_pdf_url','category','min_players','max_players','difficulty_level','avg_minutes','description','publisher','publish_year','bgg_id','recommend_weight'];
+    const sets = [], params = [];
+    for (const f of fields) {
+      const key = f.replace(/_([a-z])/g, (_,c)=>c.toUpperCase()).replace(/_/g,'');
+      if (req.body[key] !== undefined) { sets.push(`${f}=?`); params.push(req.body[key]); }
+    }
+    if (!sets.length) return sendError(res, 400, 'no_fields');
+    params.push(req.params.id, tid);
+    await pool.query(`UPDATE games SET ${sets.join(',')} WHERE id=? AND tenant_id=?`, params);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+app.delete('/api/games-mgmt/:id', requireTenantAdmin, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    await pool.query('DELETE FROM games WHERE id=? AND tenant_id=?', [req.params.id, tid]);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+// ---------- 租户信息 ----------
+app.get('/api/tenant/info', requireAuth, async (req, res) => {
+  try {
+    const tid = tenantId(req);
+    const [[tenant]] = await pool.query('SELECT id, name, phone, planType, status, created_at AS createdAt FROM tenants WHERE id=?', [tid]);
+    const [[venueCount]] = await pool.query('SELECT COUNT(*) as cnt FROM venues WHERE tenant_id=?', [tid]);
+    const [[staffCount]] = await pool.query('SELECT COUNT(*) as cnt FROM app_users WHERE tenant_id=?', [tid]);
+    const [[gameCount]] = await pool.query('SELECT COUNT(*) as cnt FROM games WHERE tenant_id=?', [tid]);
+    res.json({ ...tenant, venueCount: venueCount.cnt, staffCount: staffCount.cnt, gameCount: gameCount.cnt });
+  } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
 if (process.env.SERVE_WEB === '1') {
