@@ -1447,55 +1447,68 @@ function renderReportsPage() {
 
 function renderCustomerBookingPage() {
   const selectedTable = state.customerMatches.find((table) => Number(table.tableId) === Number(state.customerSelectedTableId));
+  const games = state.games || [];
+  const diffLabels = {1:'入门',2:'简单',3:'中等',4:'较难',5:'重度'};
+
   return `
-    <section class="customer-booking">
-      <div class="panel customer-card">
-        <div class="section-head">
-          <div>
-            <h2>远程预约</h2>
-            <span>填写人数和到店时间后，系统会匹配容量合适的空闲桌位或包间。</span>
-          </div>
-          <span class="soft-chip">${state.venue?.name ? escapeHtml(state.venue.name) : '桌游门店'}</span>
+    <div class="customer-hero">
+      <h2>预约桌位，轻松开局</h2>
+      <p>选择人数和时间，系统自动匹配最合适的桌位。也可先浏览桌游目录，找到想玩的再预约。</p>
+    </div>
+    <div class="customer-layout">
+      <div class="booking-card">
+        <h3>${state.customerResult ? '预约成功 ✅' : '预约信息'}</h3>
+        ${state.customerResult
+          ? `<div class="success-panel">
+              <strong>预约已提交 #${state.customerResult.reservationId}</strong>
+              <span>${escapeHtml(state.customerResult.tableCode || '')} ${state.customerResult.seatCapacity || ''}人桌，请按时到店。</span>
+            </div>`
+          : ''}
+        <label class="field"><span>姓名</span><input class="input" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" placeholder="您的称呼" /></label>
+        <label class="field"><span>电话</span><input class="input" type="tel" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" placeholder="方便联系" /></label>
+        <label class="field"><span>人数</span><input class="input" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" /></label>
+        <div class="field-row">
+          <label class="field"><span>到店</span><input class="input" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" /></label>
+          <label class="field"><span>离店</span><input class="input" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" /></label>
         </div>
-        ${
-          state.customerResult
-            ? `<div class="success-panel">
-                <strong>预约已提交</strong>
-                <span>预约号 #${state.customerResult.reservationId}，桌位 ${escapeHtml(state.customerResult.tableCode || '')}，${state.customerResult.seatCapacity || ''} 人桌。</span>
-              </div>`
-            : ''
-        }
-        <div class="customer-booking-grid">
-          <form class="form-grid customer-form">
-            <label class="field"><span>姓名 / 称呼</span><input class="input" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" /></label>
-            <label class="field"><span>联系电话</span><input class="input" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" /></label>
-            <label class="field"><span>人数</span><input class="input" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" /></label>
-            <label class="field"><span>开始时间</span><input class="input" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" /></label>
-            <label class="field"><span>结束时间</span><input class="input" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" /></label>
-            <div class="form-actions two">
-              <button class="btn btn-secondary" data-customer-match type="button">匹配桌位</button>
-              <button class="btn btn-primary" data-customer-submit type="button">${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}</button>
+        ${!state.customerResult ? `
+          <button class="btn btn-secondary btn-full" data-customer-match type="button">🔍 查找可用桌位</button>
+          ${state.customerMatches.length > 0 ? `
+            <div style="margin-top:14px">
+              <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">${state.customerMatches.length} 个可用桌位</div>
+              <div class="match-list">${renderTableMatchList(state.customerMatches, 'customer')}</div>
             </div>
-          </form>
-          <div class="match-panel">
-            <div class="mini-section-head"><strong>可选桌位</strong><span>${selectedTable ? `已选 ${escapeHtml(selectedTable.code)}` : '未选择时将自动分配最优桌位'}</span></div>
-            ${renderTableMatchList(state.customerMatches, 'customer')}
-          </div>
+            ${selectedTable ? `<div class="selected-table-preview"><div class="table-icon">🪑</div><div class="table-info"><strong>${escapeHtml(selectedTable.code)} · ${selectedTable.seatCapacity}人桌</strong><span>${escapeHtml(selectedTable.areaType||'standard')}</span></div></div>` : ''}
+            <button class="btn btn-primary btn-full" data-customer-submit type="button" style="margin-top:12px">${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}</button>
+          ` : ''}
+        ` : ''}
+      </div>
+      <div class="game-catalog-section">
+        <h3>店内桌游 · ${games.length} 款</h3>
+        <div class="game-card-grid">
+          ${games.slice(0, 12).map(g => {
+            const dif = diffLabels[g.difficulty_level || g.difficulty] || '中等';
+            return `
+            <div class="game-card">
+              <img class="game-card-img" src="${escapeAttr(g.cover_image_url || g.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80')}" alt="${escapeAttr(g.title)}" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80'" />
+              <div class="game-card-body">
+                <h3>${escapeHtml(g.title)}</h3>
+                <p class="meta">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人 · ${g.avg_minutes || g.avgMinutes || 90}分钟 · ${dif}</p>
+                ${g.description ? `<p class="desc">${escapeHtml(g.description)}</p>` : ''}
+              </div>
+            </div>`;
+          }).join('')}
         </div>
       </div>
-    </section>`;
+    </div>`;
 }
 
 function renderPublicCustomerShell() {
   return `
     <div class="public-shell">
       <header class="public-topbar">
-        <div>
-          <span class="eyebrow">Customer Booking</span>
-          <h1>客户远程预约</h1>
-          <p>无需登录，提交后门店后台会看到预约记录。</p>
-        </div>
-        <a class="btn btn-ghost" href="#/dashboard">${state.currentUser ? '进入后台' : '员工登录'}</a>
+        <h1>🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</h1>
+        <a class="back-link" href="#/dashboard">${state.currentUser ? '进入后台' : '员工登录 →'}</a>
       </header>
       ${renderCustomerBookingPage()}
     </div>
