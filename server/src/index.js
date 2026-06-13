@@ -822,15 +822,21 @@ app.get('/api/members', async (req, res) => {
   const status = String(req.query.status || 'all');
   const where = [];
   const params = [];
+  let orderBy = 'status ASC, id DESC';
 
   if (q) {
-    where.push('(display_name LIKE ? OR phone LIKE ? OR member_no LIKE ?)');
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    // 姓名走全文检索（相关度），手机号/会员号走 LIKE 精确匹配
+    const like = `%${q}%`;
+    where.push('(MATCH(display_name) AGAINST(? IN NATURAL LANGUAGE MODE) OR display_name LIKE ? OR phone LIKE ? OR member_no LIKE ?)');
+    params.push(q, like, like, like);
+    // 相关度排序：全文命中优先
+    orderBy = 'MATCH(display_name) AGAINST(? IN NATURAL LANGUAGE MODE) DESC, status ASC, id DESC';
   }
   if (status === 'active' || status === 'disabled') {
     where.push('status = ?');
     params.push(status);
   }
+  if (q) params.push(q); // for ORDER BY relevance
 
   const [rows] = await pool.query(
     `SELECT id, member_no AS memberNo, display_name AS displayName, phone, avatar_url AS avatarUrl,
@@ -838,7 +844,7 @@ app.get('/api/members', async (req, res) => {
             total_spent_cents AS totalSpentCents, status, created_at AS createdAt
      FROM players
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY status ASC, id DESC
+     ORDER BY ${orderBy}
      LIMIT 300`,
     params
   );
@@ -1593,17 +1599,38 @@ app.patch('/api/staff-mgmt/:id', requireTenantAdmin, async (req, res) => {
 app.get('/api/games-mgmt/list', requireAuth, async (req, res) => {
   try {
     const tid = tenantId(req);
-    const search = req.query.search || '';
-    let query = `SELECT id, title, cover_image_url AS coverImageUrl, category,
+    const search = String(req.query.search || '').trim();
+    const baseSelect = `SELECT id, title, cover_image_url AS coverImageUrl, category,
                         min_players AS minPlayers, max_players AS maxPlayers,
                         difficulty_level AS difficulty, avg_minutes AS avgMinutes,
-                        description, publisher, publish_year AS publishYear, bgg_id AS bggId
-                 FROM games WHERE tenant_id = ?`;
-    const params = [tid];
-    if (search) { query += ' AND (title LIKE ? OR description LIKE ? OR category LIKE ?)'; params.push(`%${search}%`,`%${search}%`,`%${search}%`); }
-    query += ' ORDER BY created_at DESC';
-    const [rows] = await pool.query(query, params);
-    res.json({ data: rows });
+                        description, publisher, publish_year AS publishYear, bgg_id AS bggId`;
+    if (!search) {
+      const [rows] = await pool.query(
+        `${baseSelect} FROM games WHERE tenant_id = ? ORDER BY created_at DESC`,
+        [tid]
+      );
+      return res.json({ data: rows });
+    }
+    // 优先全文检索（按相关度排序）
+    const [ftRows] = await pool.query(
+      `${baseSelect},
+        MATCH(title, category, description) AGAINST(? IN NATURAL LANGUAGE MODE) AS relevance
+       FROM games
+       WHERE tenant_id = ?
+         AND MATCH(title, category, description) AGAINST(? IN NATURAL LANGUAGE MODE)
+       ORDER BY relevance DESC`,
+      [search, tid, search]
+    );
+    if (ftRows.length) return res.json({ data: ftRows });
+    // 回退 LIKE（短词/ngram 未命中时的双保险）
+    const like = `%${search}%`;
+    const [likeRows] = await pool.query(
+      `${baseSelect} FROM games
+       WHERE tenant_id = ? AND (title LIKE ? OR description LIKE ? OR category LIKE ?)
+       ORDER BY created_at DESC`,
+      [tid, like, like, like]
+    );
+    res.json({ data: likeRows });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
