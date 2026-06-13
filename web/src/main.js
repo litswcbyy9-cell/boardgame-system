@@ -198,6 +198,7 @@ const state = {
   reservations: [],
   openSessions: [],
   leaderboard: [],
+  leaderboardSort: 'winrate',
   popularity: [],
   tableUtilization: [],
   revenue: null,
@@ -232,6 +233,9 @@ const state = {
   settleNotes: '',
   gameId: '1',
   winnerId: '',
+  recordParticipants: [],
+  recordMode: 'single',
+  participantToAdd: '',
   closedSessionId: '',
   memberSearch: '',
   staffSearch: '',
@@ -330,6 +334,17 @@ function formatWinRate(value) {
   if (numeric <= 1) return `${Math.round(numeric * 1000) / 10}%`;
   return `${Math.round(numeric * 10) / 10}%`;
 }
+
+// ELO 段位映射
+function eloTier(elo) {
+  const n = Number(elo) || 1200;
+  if (n >= 1800) return { name: '钻石', cls: 'tier-diamond' };
+  if (n >= 1600) return { name: '铂金', cls: 'tier-platinum' };
+  if (n >= 1400) return { name: '黄金', cls: 'tier-gold' };
+  if (n >= 1200) return { name: '白银', cls: 'tier-silver' };
+  return { name: '青铜', cls: 'tier-bronze' };
+}
+
 
 const clientErrorMessages = {
   unauthorized: '请先登录后再操作',
@@ -933,15 +948,59 @@ function renderSelectedPanel() {
           ${state.games.map((g) => `<option value="${g.id}" ${String(state.gameId) === String(g.id) ? 'selected' : ''}>${escapeHtml(g.title)}</option>`).join('')}
         </select>
       </label>
-      <label class="field">
-        <span>胜者</span>
-        <select class="input" data-field="winnerId">
-          <option value="">访客或无胜者</option>
-          ${state.players.map((p) => `<option value="${p.id}" ${String(state.winnerId) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.displayName)}</option>`).join('')}
-        </select>
-      </label>
+      <div class="record-mode-toggle">
+        <button class="lb-toggle-btn ${state.recordMode !== 'multi' ? 'is-active' : ''}" data-record-mode="single" type="button">单胜者</button>
+        <button class="lb-toggle-btn ${state.recordMode === 'multi' ? 'is-active' : ''}" data-record-mode="multi" type="button">多人排名 (ELO)</button>
+      </div>
+      ${
+        state.recordMode === 'multi'
+          ? renderParticipantBuilder()
+          : `<label class="field">
+              <span>胜者</span>
+              <select class="input" data-field="winnerId">
+                <option value="">访客或无胜者</option>
+                ${state.players.map((p) => `<option value="${p.id}" ${String(state.winnerId) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.displayName)}</option>`).join('')}
+              </select>
+            </label>`
+      }
       <button class="btn btn-secondary full" data-record type="button">写入战绩</button>
     </form>`;
+}
+
+// 多人排名录入构建器：选会员加入，按加入顺序自动排名 1,2,3...
+function renderParticipantBuilder() {
+  const chosen = state.recordParticipants || [];
+  const chosenIds = new Set(chosen.map((p) => Number(p.playerId)));
+  const available = state.players.filter((p) => !chosenIds.has(Number(p.id)));
+  const rows = chosen.length
+    ? chosen
+        .map((p, i) => {
+          const player = state.players.find((x) => Number(x.id) === Number(p.playerId));
+          return `
+            <div class="participant-row">
+              <span class="participant-rank">第 ${i + 1} 名</span>
+              <strong>${escapeHtml(player?.displayName || `#${p.playerId}`)}</strong>
+              <span class="participant-moves">
+                ${i > 0 ? `<button class="btn-icon-mini" data-part-up="${i}" type="button" title="上移">↑</button>` : ''}
+                ${i < chosen.length - 1 ? `<button class="btn-icon-mini" data-part-down="${i}" type="button" title="下移">↓</button>` : ''}
+                <button class="btn-icon-mini danger" data-part-remove="${i}" type="button" title="移除">×</button>
+              </span>
+            </div>`;
+        })
+        .join('')
+    : '<div class="empty-state compact">按名次依次添加参与会员（先加的名次靠前）。至少 2 人才计算 ELO。</div>';
+  return `
+    <div class="participant-builder">
+      <span class="field-label">参与排名（按名次顺序）</span>
+      <div class="participant-list">${rows}</div>
+      <div class="participant-add">
+        <select class="input" data-field="participantToAdd">
+          <option value="">＋ 添加会员…</option>
+          ${available.map((p) => `<option value="${p.id}">${escapeHtml(p.displayName)}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost btn-sm" data-part-add type="button">添加</button>
+      </div>
+    </div>`;
 }
 
 function renderMemberReservations(member) {
@@ -1278,17 +1337,35 @@ function renderSessions() {
 
 function renderLeaderboard() {
   if (!state.leaderboard.length) return '<div class="empty-state compact">暂无排行数据。</div>';
-  return state.leaderboard
+  const sort = state.leaderboardSort === 'elo' ? 'elo' : 'winrate';
+  const sorted = state.leaderboard.slice().sort((a, b) => {
+    if (sort === 'elo') return (Number(b.eloRating) || 0) - (Number(a.eloRating) || 0) || b.wins - a.wins;
+    return Number(b.winRate) - Number(a.winRate) || b.wins - a.wins;
+  });
+  const toggle = `
+    <div class="lb-toggle">
+      <button class="lb-toggle-btn ${sort === 'winrate' ? 'is-active' : ''}" data-lb-sort="winrate" type="button">胜率</button>
+      <button class="lb-toggle-btn ${sort === 'elo' ? 'is-active' : ''}" data-lb-sort="elo" type="button">ELO</button>
+    </div>`;
+  const rows = sorted
     .slice(0, 6)
-    .map(
-      (row, index) => `
+    .map((row, index) => {
+      const tier = eloTier(row.eloRating);
+      const metric = sort === 'elo'
+        ? `<b>${Number(row.eloRating) || 1200}</b>`
+        : `<b>${formatWinRate(row.winRate)}</b>`;
+      return `
         <div class="rank-row">
           <span class="rank-no">${index + 1}</span>
-          <div><strong>${escapeHtml(row.displayName)}</strong><span>${row.wins} 胜 / ${row.games} 局</span></div>
-          <b>${formatWinRate(row.winRate)}</b>
-        </div>`
-    )
+          <div>
+            <strong>${escapeHtml(row.displayName)} <span class="tier-badge ${tier.cls}">${tier.name}</span></strong>
+            <span>${row.wins} 胜 / ${row.losses ?? 0} 负 / ${row.games} 局 · ELO ${Number(row.eloRating) || 1200}</span>
+          </div>
+          ${metric}
+        </div>`;
+    })
     .join('');
+  return toggle + rows;
 }
 
 function renderGameCatalog() {
@@ -1508,7 +1585,7 @@ function renderPublicCustomerShell() {
     <div class="public-shell">
       <header class="public-topbar">
         <h1>🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</h1>
-        <a class="back-link" href="#/dashboard">${state.currentUser ? '进入后台' : '员工登录 →'}</a>
+        ${state.currentUser ? `<a class="back-link" href="#/dashboard">进入后台 →</a>` : ''}
       </header>
       ${renderCustomerBookingPage()}
     </div>
@@ -1901,6 +1978,12 @@ function bind() {
   root.querySelector('[data-register]')?.addEventListener('click', () => void onRegister());
   root.querySelector('[data-logout]')?.addEventListener('click', () => void onLogout());
   root.querySelectorAll('[data-refresh]').forEach((button) => button.addEventListener('click', () => void refresh()));
+  root.querySelectorAll('[data-lb-sort]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.leaderboardSort = button.getAttribute('data-lb-sort');
+      render();
+    })
+  );
   root.querySelector('[data-field="memberSearch"]')?.addEventListener('change', () => void refresh());
   root.querySelectorAll('[data-table-id]').forEach((button) =>
     button.addEventListener('click', () => {
@@ -1937,6 +2020,42 @@ function bind() {
   root.querySelector('[data-match-tables]')?.addEventListener('click', () => void onMatchTables());
   root.querySelector('[data-settle]')?.addEventListener('click', onSettle);
   root.querySelector('[data-record]')?.addEventListener('click', onRecord);
+  root.querySelectorAll('[data-record-mode]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.recordMode = button.getAttribute('data-record-mode');
+      render();
+    })
+  );
+  root.querySelector('[data-part-add]')?.addEventListener('click', () => {
+    const id = Number(state.participantToAdd);
+    if (id && !state.recordParticipants.some((p) => Number(p.playerId) === id)) {
+      state.recordParticipants.push({ playerId: id });
+      state.participantToAdd = '';
+    }
+    render();
+  });
+  root.querySelectorAll('[data-part-remove]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.recordParticipants.splice(Number(button.getAttribute('data-part-remove')), 1);
+      render();
+    })
+  );
+  root.querySelectorAll('[data-part-up]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const i = Number(button.getAttribute('data-part-up'));
+      const arr = state.recordParticipants;
+      [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+      render();
+    })
+  );
+  root.querySelectorAll('[data-part-down]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const i = Number(button.getAttribute('data-part-down'));
+      const arr = state.recordParticipants;
+      [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
+      render();
+    })
+  );
   root.querySelector('[data-recommend]')?.addEventListener('click', onRecommend);
   root.querySelector('[data-member-create]')?.addEventListener('click', onCreateMember);
   root.querySelectorAll('[data-member-recharge]').forEach((button) => button.addEventListener('click', () => onMemberMoney(button, 'recharge')));
@@ -2434,17 +2553,35 @@ async function onRecord() {
     showToast('请先填写已结算 sessionId', 'err');
     return;
   }
+  const body = { gameId: Number(state.gameId), winnerDisplayName: null, scoreJson: null };
+  if (state.recordMode === 'multi') {
+    const parts = (state.recordParticipants || []).map((p, i) => ({ playerId: Number(p.playerId), rankNo: i + 1 }));
+    if (parts.length < 2) {
+      showToast('多人排名至少需要 2 名参与者', 'err');
+      return;
+    }
+    body.participants = parts;
+  } else {
+    body.winnerPlayerId = state.winnerId === '' ? null : Number(state.winnerId);
+  }
   try {
-    await api(`/api/sessions/${sessionId}/game-records`, {
+    const result = await api(`/api/sessions/${sessionId}/game-records`, {
       method: 'POST',
-      body: JSON.stringify({
-        gameId: Number(state.gameId),
-        winnerPlayerId: state.winnerId === '' ? null : Number(state.winnerId),
-        winnerDisplayName: null,
-        scoreJson: null,
-      }),
+      body: JSON.stringify(body),
     });
-    showToast('战绩已写入');
+    if (result?.elo?.length) {
+      const summary = result.elo
+        .map((e) => {
+          const player = state.players.find((x) => Number(x.id) === Number(e.playerId));
+          const sign = e.delta >= 0 ? '+' : '';
+          return `${player?.displayName || '#' + e.playerId} ${sign}${e.delta}`;
+        })
+        .join('，');
+      showToast(`战绩已写入，ELO 变化：${summary}`);
+    } else {
+      showToast('战绩已写入');
+    }
+    state.recordParticipants = [];
     await refresh();
   } catch (error) {
     showToast(error.message, 'err');

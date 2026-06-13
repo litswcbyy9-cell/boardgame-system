@@ -279,6 +279,34 @@ async function callGameRecord(sessionId, gameId, winnerPlayerId, winnerDisplayNa
   }
 }
 
+// ELO 评分：胜者对每个败者两两计算，取平均增量。K=32，初始分 1200。
+function eloExpected(a, b) {
+  return 1 / (1 + Math.pow(10, (b - a) / 400));
+}
+
+// 根据名次列表计算每人 ELO 变化。participants: [{playerId, rating, rankNo}]
+// 名次越小越靠前；同名次视为平局。返回 Map(playerId -> delta)
+function calcEloDeltas(participants, k = 32) {
+  const deltas = new Map();
+  for (const p of participants) deltas.set(p.playerId, 0);
+  for (let i = 0; i < participants.length; i++) {
+    for (let j = i + 1; j < participants.length; j++) {
+      const a = participants[i];
+      const b = participants[j];
+      // 实际得分：名次小者胜(1)，相同则平(0.5)
+      let sa;
+      if (a.rankNo < b.rankNo) sa = 1;
+      else if (a.rankNo > b.rankNo) sa = 0;
+      else sa = 0.5;
+      const ea = eloExpected(a.rating, b.rating);
+      const da = Math.round(k * (sa - ea));
+      deltas.set(a.playerId, deltas.get(a.playerId) + da);
+      deltas.set(b.playerId, deltas.get(b.playerId) - da);
+    }
+  }
+  return deltas;
+}
+
 async function callCancelReservation(reservationId) {
   const conn = await pool.getConnection();
   try {
@@ -911,12 +939,20 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/leaderboard', async (_req, res) => {
+app.get('/api/leaderboard', async (req, res) => {
+  const sortBy = req.query.sortBy === 'elo' ? 'elo' : 'winrate';
+  const orderClause =
+    sortBy === 'elo'
+      ? 'ps.elo_rating DESC, ps.wins DESC, ps.games DESC'
+      : '(CASE WHEN ps.games = 0 THEN 0 ELSE ps.wins / ps.games END) DESC, ps.wins DESC, ps.games DESC';
   const [rows] = await pool.query(
-    `SELECT player_id AS playerId, display_name AS displayName, avatar_url AS avatarUrl,
-            wins, games, win_rate AS winRate, last_win_at AS lastWinAt
-     FROM v_leaderboard
-     ORDER BY win_rate DESC, wins DESC, games DESC
+    `SELECT p.id AS playerId, p.display_name AS displayName, p.avatar_url AS avatarUrl,
+            ps.wins, ps.games, ps.losses, ps.elo_rating AS eloRating,
+            (CASE WHEN ps.games = 0 THEN 0 ELSE ROUND(ps.wins / ps.games, 4) END) AS winRate,
+            ps.last_win_at AS lastWinAt
+     FROM players p
+     INNER JOIN player_stats ps ON ps.player_id = p.id
+     ORDER BY ${orderClause}
      LIMIT 50`
   );
   res.json(rows);
@@ -1296,19 +1332,91 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 });
 
 app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
-  const { gameId, winnerPlayerId, winnerDisplayName, scoreJson } = req.body || {};
+  const { gameId, winnerPlayerId, winnerDisplayName, scoreJson, participants } = req.body || {};
   if (!gameId) return sendError(res, 400, 'missing_gameId');
+
+  // 解析参与者：[{playerId, rankNo, score}]。winner = rankNo 最小者（兜底用 winnerPlayerId）。
+  const parts = Array.isArray(participants)
+    ? participants
+        .map((p) => ({
+          playerId: Number(p.playerId),
+          rankNo: Number(p.rankNo ?? p.rank ?? 0) || 999,
+          score: p.score == null ? null : Number(p.score),
+        }))
+        .filter((p) => Number.isFinite(p.playerId) && p.playerId > 0)
+    : [];
+
+  // 确定胜者：优先显式 winnerPlayerId，否则取名次最小的参与者
+  let effectiveWinnerId = winnerPlayerId == null ? null : Number(winnerPlayerId);
+  if (effectiveWinnerId == null && parts.length) {
+    const minRank = Math.min(...parts.map((p) => p.rankNo));
+    const top = parts.filter((p) => p.rankNo === minRank);
+    if (top.length === 1) effectiveWinnerId = top[0].playerId;
+  }
+
+  // 1) 写 game_records（沿用存储过程，触发器会给 winner 加 wins/games）
   const row = await callGameRecord(
     Number(req.params.id),
     Number(gameId),
-    winnerPlayerId == null ? null : Number(winnerPlayerId),
+    effectiveWinnerId,
     winnerDisplayName == null ? null : String(winnerDisplayName),
     scoreJson
   );
-  if (row.errCode) {
-    return sendError(res, 409, row.errCode);
+  if (row.errCode) return sendError(res, 409, row.errCode);
+  const recordId = Number(row.recordId);
+
+  // 2) 多人对局：写参与者明细 + 更新 ELO/losses/games
+  let eloResult = [];
+  if (parts.length >= 2) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // 读各参与者当前 ELO（缺则建行）
+      const ids = parts.map((p) => p.playerId);
+      await conn.query(
+        `INSERT IGNORE INTO player_stats (player_id, wins, games, elo_rating, losses)
+         SELECT id, 0, 0, 1200, 0 FROM players WHERE id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      const [statRows] = await conn.query(
+        `SELECT player_id, elo_rating FROM player_stats WHERE player_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      const ratingMap = new Map(statRows.map((r) => [r.player_id, r.elo_rating]));
+      const withRating = parts.map((p) => ({ ...p, rating: ratingMap.get(p.playerId) ?? 1200 }));
+      const deltas = calcEloDeltas(withRating);
+      const minRank = Math.min(...parts.map((p) => p.rankNo));
+
+      for (const p of withRating) {
+        const before = p.rating;
+        const after = before + (deltas.get(p.playerId) || 0);
+        const isWinner = p.rankNo === minRank ? 1 : 0;
+        await conn.query(
+          `INSERT INTO game_record_participants (record_id, player_id, is_winner, rank_no, score, elo_before, elo_after)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [recordId, p.playerId, isWinner, p.rankNo, p.score, before, after]
+        );
+        // 触发器已给 winner +1 wins/games；这里给非胜者补 games/losses，并给所有人更新 elo
+        if (isWinner) {
+          await conn.query('UPDATE player_stats SET elo_rating=? WHERE player_id=?', [after, p.playerId]);
+        } else {
+          await conn.query(
+            'UPDATE player_stats SET elo_rating=?, games=games+1, losses=losses+1 WHERE player_id=?',
+            [after, p.playerId]
+          );
+        }
+        eloResult.push({ playerId: p.playerId, eloBefore: before, eloAfter: after, delta: after - before });
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      console.error('[ERROR] elo update:', e);
+    } finally {
+      conn.release();
+    }
   }
-  res.status(201).json({ recordId: Number(row.recordId) });
+
+  res.status(201).json({ recordId, elo: eloResult });
 });
 
 // =====================================================================
