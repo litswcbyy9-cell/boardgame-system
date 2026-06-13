@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { callLLM, llmInfo } from './llm.js';
 
 dotenv.config();
 
@@ -377,6 +378,12 @@ const ERROR_MESSAGES = {
     unauthorized: '请先登录后再操作',
     forbidden: '当前账号没有执行该操作的权限',
     database_error: '数据库操作失败，请检查数据库连接或稍后重试',
+    llm_error: '大模型调用失败，请检查 API Key 配置或稍后重试',
+    copy_not_available: '该副本当前不可借出',
+    copy_not_found: '桌游副本不存在',
+    copy_lent: '该副本正在借出中，不能删除',
+    loan_not_found: '借出记录不存在',
+    loan_not_active: '该借出记录不是借出中状态',
     missing_staff_name: '员工姓名不能为空',
     staff_not_found: '员工不存在或已停用',
     employee_no_exists: '员工号已存在',
@@ -1860,6 +1867,92 @@ app.post('/api/rental/loans/:id/return', requireAuth, async (req, res) => {
     console.error('[ERROR] loan return:', e);
     sendError(res, 500, 'db_error');
   } finally { conn.release(); }
+});
+
+// =====================================================================
+// Phase D: LLM 大模型集成
+// =====================================================================
+
+// 配置状态（前端据此决定是否显示 AI 入口/提示未配置）
+app.get('/api/ai/info', requireAuth, (_req, res) => {
+  res.json(llmInfo());
+});
+
+// 桌游描述生成：输入桌游名+参数，生成中文简介
+app.post('/api/ai/game-description', requireAuth, async (req, res) => {
+  const { title, category, minPlayers, maxPlayers, avgMinutes, difficulty } = req.body || {};
+  if (!title) return sendError(res, 400, 'missing_fields');
+  const meta = [
+    category && `分类：${category}`,
+    (minPlayers || maxPlayers) && `人数：${minPlayers || '?'}-${maxPlayers || '?'} 人`,
+    avgMinutes && `时长：约 ${avgMinutes} 分钟`,
+    difficulty && `难度：${difficulty}/5`,
+  ].filter(Boolean).join('，');
+  try {
+    const { content, mock } = await callLLM([
+      { role: 'system', content: '你是桌游馆的资深店员，为桌游写简洁吸引人的中文介绍。控制在 80-120 字，包含玩法亮点和适合人群，不要分点，不要 markdown。' },
+      { role: 'user', content: `请为这款桌游写一段介绍：《${title}》${meta ? '（' + meta + '）' : ''}` },
+    ], { temperature: 0.8, maxTokens: 400 });
+    res.json({ description: content.trim(), mock });
+  } catch (e) {
+    console.error('[ERROR] ai game-description:', e);
+    sendError(res, 502, 'llm_error', String(e.message));
+  }
+});
+
+// 经营数据问答：先查 DB 汇总，塞进 system prompt，LLM 自然语言回答
+app.post('/api/ai/ask', requireAuth, async (req, res) => {
+  const question = String(req.body?.question || '').trim();
+  if (!question) return sendError(res, 400, 'missing_fields');
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const [[revenue]] = await pool.query('CALL sp_report_daily_revenue(?)', [today]).then((r) => r[0]).catch(() => [[{}]]);
+    const [popularity] = await pool.query('CALL sp_report_game_popularity(?)', [30]).then((r) => [r[0]]).catch(() => [[]]);
+    const [tableUtil] = await pool.query('CALL sp_report_table_utilization(?)', [30]).then((r) => [r[0]]).catch(() => [[]]);
+    const [[tableState]] = await pool.query(
+      `SELECT SUM(status='idle') AS idle, SUM(status='reserved') AS reserved, SUM(status='occupied') AS occupied FROM game_table_state`
+    );
+    const [[memberCount]] = await pool.query("SELECT COUNT(*) AS total FROM players WHERE status='active'");
+
+    const context = {
+      日期: today,
+      今日收入元: revenue?.revenue_yuan ?? revenue?.total_revenue_yuan ?? 0,
+      今日结算单数: revenue?.settled_sessions ?? 0,
+      桌位状态: { 空闲: Number(tableState?.idle) || 0, 预约: Number(tableState?.reserved) || 0, 占用: Number(tableState?.occupied) || 0 },
+      活跃会员数: Number(memberCount?.total) || 0,
+      热门桌游TOP5: (popularity || []).slice(0, 5).map((p) => ({ 名称: p.title || p.game_title, 局数: p.record_count ?? p.play_count })),
+      热门桌位TOP5: (tableUtil || []).slice(0, 5).map((t) => ({ 桌位: t.code, 场次: t.settled_sessions_in_range ?? t.sessions })),
+    };
+    const { content, mock } = await callLLM([
+      { role: 'system', content: '你是桌游馆运营助手。根据提供的 JSON 经营数据用简洁中文回答店员的问题。只依据数据回答，数据没有的就说暂无该数据。不要编造数字。' },
+      { role: 'user', content: `经营数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
+    ], { temperature: 0.3, maxTokens: 600 });
+    res.json({ answer: content.trim(), data: context, mock });
+  } catch (e) {
+    console.error('[ERROR] ai ask:', e);
+    sendError(res, 502, 'llm_error', String(e.message));
+  }
+});
+
+// 顾客 AI 客服（公开端点）：只答桌游/预约相关，附带桌游目录
+app.post('/api/public/ai/chat', async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return sendError(res, 400, 'missing_fields');
+  try {
+    const [games] = await pool.query(
+      `SELECT title, category, min_players AS minP, max_players AS maxP, avg_minutes AS mins, difficulty_level AS diff
+       FROM games ORDER BY recommend_weight DESC LIMIT 30`
+    );
+    const catalog = games.map((g) => `${g.title}（${g.category}，${g.minP}-${g.maxP}人，${g.mins}分钟，难度${g.diff}/5）`).join('；');
+    const { content, mock } = await callLLM([
+      { role: 'system', content: `你是桌游馆的友好客服。只回答桌游推荐、预约、营业相关问题，其他话题礼貌婉拒。店内桌游目录：${catalog}。根据顾客需求推荐合适桌游，简洁热情，控制在 120 字内。` },
+      { role: 'user', content: message },
+    ], { temperature: 0.7, maxTokens: 400 });
+    res.json({ reply: content.trim(), mock });
+  } catch (e) {
+    console.error('[ERROR] ai chat:', e);
+    sendError(res, 502, 'llm_error', String(e.message));
+  }
 });
 
 // ---------- 租户信息 ----------

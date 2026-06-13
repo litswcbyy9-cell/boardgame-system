@@ -99,6 +99,14 @@ const navItems = [
     description: '管理实体桌游库存、借出归还、押金与逾期。',
   },
   {
+    id: 'ai',
+    label: 'AI 助手',
+    icon: 'recommend',
+    eyebrow: 'AI Assistant',
+    title: 'AI 经营助手',
+    description: '用自然语言查询经营数据，获取桌游与运营建议。',
+  },
+  {
     id: 'staff-mgmt',
     label: '权限管理',
     icon: 'staff',
@@ -284,6 +292,13 @@ const state = {
   rentalNewCopyBarcode: '',
   rentalNewCopyLocation: '',
   rentalNewCopyDeposit: '50',
+  aiMessages: [],
+  aiInput: '',
+  aiLoading: false,
+  custChatOpen: false,
+  custChatMessages: [],
+  custChatInput: '',
+  custChatLoading: false,
 };
 
 function pad(n) {
@@ -1607,8 +1622,35 @@ function renderPublicCustomerShell() {
       </header>
       ${renderCustomerBookingPage()}
     </div>
+    ${renderCustomerChatWidget()}
     <div id="toast-host" class="toast-host"></div>`;
 }
+
+// 顾客客服气泡
+function renderCustomerChatWidget() {
+  const open = state.custChatOpen;
+  const messages = state.custChatMessages || [];
+  const bubbles = messages.length
+    ? messages.map((m) => `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div></div>`).join('')
+    : '<div class="cust-chat-hello">你好！我是 AI 客服，可以帮你推荐桌游或解答预约问题 🎲</div>';
+  return `
+    <div class="cust-chat ${open ? 'is-open' : ''}">
+      ${open ? `
+        <div class="cust-chat-window">
+          <div class="cust-chat-head"><strong>AI 客服</strong><button class="cust-chat-close" id="btn-cust-chat-close" type="button">×</button></div>
+          <div class="cust-chat-log" id="cust-chat-log">
+            ${bubbles}
+            ${state.custChatLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing">输入中…</div></div>' : ''}
+          </div>
+          <div class="cust-chat-input">
+            <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问问想玩什么…" value="${escapeAttr(state.custChatInput || '')}" />
+            <button class="btn btn-primary btn-sm" id="btn-cust-chat-send" type="button" ${state.custChatLoading ? 'disabled' : ''}>发送</button>
+          </div>
+        </div>` : ''}
+      <button class="cust-chat-fab" id="btn-cust-chat-toggle" type="button">${open ? '收起' : '💬 AI 客服'}</button>
+    </div>`;
+}
+
 
 // =====================================================================
 // =====================================================================
@@ -1677,7 +1719,7 @@ async function renderGameManagementPage() {
               <div class="form-group"><label>时长(分钟)</label><input type="number" name="avgMinutes" class="form-input" value="90" min="10" max="600" /></div>
             </div>
             <div class="form-group"><label>封面图 URL</label><input type="url" name="coverImageUrl" class="form-input" placeholder="https://..." id="game-cover" /></div>
-            <div class="form-group"><label>描述 / 规则简介</label><textarea name="description" class="form-input" placeholder="输入桌游描述、规则要点..." id="game-desc"></textarea></div>
+            <div class="form-group"><label>描述 / 规则简介 <button type="button" class="btn btn-ghost btn-sm" id="btn-ai-desc" style="float:right;padding:2px 10px">✨ AI 生成</button></label><textarea name="description" class="form-input" placeholder="输入桌游描述、规则要点..." id="game-desc"></textarea></div>
             <div class="form-row">
               <div class="form-group"><label>出版社</label><input type="text" name="publisher" class="form-input" placeholder="出版社名称" id="game-publisher" /></div>
               <div class="form-group"><label>出版年份</label><input type="number" name="publishYear" class="form-input" placeholder="2024" min="1900" max="2100" id="game-year" /></div>
@@ -2053,6 +2095,40 @@ function renderRentalModals() {
     </div>`;
 }
 
+// =====================================================================
+// Phase D: AI 经营助手页
+// =====================================================================
+function renderAiAssistantPage() {
+  const suggestions = ['今天生意怎么样？', '哪些桌游最受欢迎？', '现在有多少空桌？', '哪个桌位用得最多？'];
+  const messages = state.aiMessages || [];
+  const bubbles = messages.length
+    ? messages
+        .map((m) => `
+          <div class="ai-msg ai-msg--${m.role}">
+            <div class="ai-bubble">${escapeHtml(m.content)}</div>
+          </div>`)
+        .join('')
+    : `<div class="ai-empty">
+        <div class="ai-empty-icon">🤖</div>
+        <p>问我关于经营数据、桌游推荐的任何问题</p>
+        <div class="ai-suggestions">
+          ${suggestions.map((s) => `<button class="ai-chip" data-ai-suggest="${escapeAttr(s)}" type="button">${escapeHtml(s)}</button>`).join('')}
+        </div>
+      </div>`;
+
+  return `<div class="page-hero"><div class="eyebrow">AI Assistant</div><h2>AI 经营助手</h2><p>用自然语言查询经营数据，获取桌游与运营建议</p></div>
+    <div class="ai-chat-panel apple-card" style="padding:0;overflow:hidden">
+      <div class="ai-chat-log" id="ai-chat-log">
+        ${bubbles}
+        ${state.aiLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing">思考中…</div></div>' : ''}
+      </div>
+      <div class="ai-chat-input">
+        <input class="input" data-field="aiInput" id="ai-input" placeholder="输入问题，回车发送…" value="${escapeAttr(state.aiInput)}" />
+        <button class="btn btn-primary" id="btn-ai-send" type="button" ${state.aiLoading ? 'disabled' : ''}>发送</button>
+      </div>
+    </div>`;
+}
+
 
 
 async function renderPageContent(summary) {
@@ -2066,6 +2142,7 @@ async function renderPageContent(summary) {
   if (state.activePage === 'coupons') return await renderCouponsPage();
   if (state.activePage === 'billing') return await renderBillingPage();
   if (state.activePage === 'rental') return await renderRentalPage();
+  if (state.activePage === 'ai') return renderAiAssistantPage();
   if (state.activePage === 'staff-mgmt') return await renderStaffAdminPage();
   return renderDashboardPage(summary);
 }
@@ -2097,7 +2174,7 @@ async function render() {
   const page = currentPageMeta();
   const venueName = state.venue?.name || '桌游门店';
   const pageContent = await renderPageContent(summary);
-  const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental';
+  const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental' || page.id === 'ai';
   $('#app').innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -2281,6 +2358,7 @@ function bind() {
   $('#btn-close-game-modal')?.addEventListener('click', closeGameModal);
   $('#btn-cancel-game')?.addEventListener('click', closeGameModal);
   $('#btn-save-game')?.addEventListener('click', () => void onSaveGame());
+  $('#btn-ai-desc')?.addEventListener('click', () => void onGenerateDescription());
   $('#game-modal')?.addEventListener('click', (e) => { if (e.target.id === 'game-modal') closeGameModal(); });
   $('#game-search-input')?.addEventListener('input', (e) => {
     state.gameSearch = e.target.value;
@@ -2337,6 +2415,22 @@ function bind() {
     button.addEventListener('click', () => void onReturnLoan(Number(button.getAttribute('data-loan-lost')), true)));
   root.querySelectorAll('[data-copy-delete]').forEach((button) =>
     button.addEventListener('click', () => void onDeleteCopy(Number(button.getAttribute('data-copy-delete')))));
+
+  // ---- AI Assistant ----
+  $('#btn-ai-send')?.addEventListener('click', () => void onAiSend());
+  $('#ai-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void onAiSend(); } });
+  root.querySelectorAll('[data-ai-suggest]').forEach((button) =>
+    button.addEventListener('click', () => { state.aiInput = button.getAttribute('data-ai-suggest'); void onAiSend(); }));
+  const log = $('#ai-chat-log');
+  if (log) log.scrollTop = log.scrollHeight;
+
+  // ---- Customer chat widget ----
+  $('#btn-cust-chat-toggle')?.addEventListener('click', () => { state.custChatOpen = !state.custChatOpen; render(); });
+  $('#btn-cust-chat-close')?.addEventListener('click', () => { state.custChatOpen = false; render(); });
+  $('#btn-cust-chat-send')?.addEventListener('click', () => void onCustChatSend());
+  $('#cust-chat-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void onCustChatSend(); } });
+  const custLog = $('#cust-chat-log');
+  if (custLog) custLog.scrollTop = custLog.scrollHeight;
 }
 
 async function onLogin() {
@@ -2831,6 +2925,36 @@ function openGameModal(gameId) {
 
 function closeGameModal() { $('#game-modal').style.display = 'none'; }
 
+async function onGenerateDescription() {
+  const form = document.getElementById('game-form');
+  if (!form) return;
+  const fd = new FormData(form);
+  const title = fd.get('title')?.toString().trim();
+  if (!title) { showToast('请先填写桌游名称', 'err'); return; }
+  const btn = $('#btn-ai-desc');
+  const descEl = document.getElementById('game-desc');
+  if (btn) { btn.disabled = true; btn.textContent = '✨ 生成中…'; }
+  try {
+    const result = await api('/api/ai/game-description', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        category: fd.get('category')?.toString().trim() || null,
+        minPlayers: Number(fd.get('minPlayers')) || null,
+        maxPlayers: Number(fd.get('maxPlayers')) || null,
+        avgMinutes: Number(fd.get('avgMinutes')) || null,
+        difficulty: Number(fd.get('difficulty')) || null,
+      }),
+    });
+    if (descEl) descEl.value = result.description || '';
+    showToast(result.mock ? '已生成示例描述（未配置大模型）' : 'AI 描述已生成');
+  } catch (e) {
+    showToast(e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ AI 生成'; }
+  }
+}
+
 async function onSaveGame() {
   const form = document.getElementById('game-form');
   if (!form) return;
@@ -3019,6 +3143,43 @@ async function onDeleteCopy(copyId) {
     showToast('副本已删除');
     await refresh();
   } catch (e) { showToast(e.message, 'err'); }
+}
+
+async function onAiSend() {
+  const question = String(state.aiInput || '').trim();
+  if (!question || state.aiLoading) return;
+  state.aiMessages.push({ role: 'user', content: question });
+  state.aiInput = '';
+  state.aiLoading = true;
+  render();
+  try {
+    const result = await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ question }) });
+    state.aiMessages.push({ role: 'assistant', content: result.answer || '（无回答）' });
+    if (result.mock) showToast('演示回答（未配置大模型）');
+  } catch (e) {
+    state.aiMessages.push({ role: 'assistant', content: `出错了：${e.message}` });
+  } finally {
+    state.aiLoading = false;
+    render();
+  }
+}
+
+async function onCustChatSend() {
+  const message = String(state.custChatInput || '').trim();
+  if (!message || state.custChatLoading) return;
+  state.custChatMessages.push({ role: 'user', content: message });
+  state.custChatInput = '';
+  state.custChatLoading = true;
+  render();
+  try {
+    const result = await api('/api/public/ai/chat', { method: 'POST', body: JSON.stringify({ message }) });
+    state.custChatMessages.push({ role: 'assistant', content: result.reply || '（无回答）' });
+  } catch (e) {
+    state.custChatMessages.push({ role: 'assistant', content: `抱歉，出错了：${e.message}` });
+  } finally {
+    state.custChatLoading = false;
+    render();
+  }
 }
 
 async function init() {
