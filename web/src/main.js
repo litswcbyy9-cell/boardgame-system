@@ -91,6 +91,14 @@ const navItems = [
     description: '查看订单列表、收入统计和优惠分析。',
   },
   {
+    id: 'rental',
+    label: '桌游租借',
+    icon: 'records',
+    eyebrow: 'Rental',
+    title: '桌游租借管理',
+    description: '管理实体桌游库存、借出归还、押金与逾期。',
+  },
+  {
     id: 'staff-mgmt',
     label: '权限管理',
     icon: 'staff',
@@ -266,6 +274,16 @@ const state = {
   customerSelectedTableId: '',
   customerMatches: [],
   customerResult: null,
+  rentalTab: 'active',
+  rentalLoanGameId: '',
+  rentalLoanCopyId: '',
+  rentalLoanPlayerId: '',
+  rentalLoanDueAt: toLocalInputValue(addHours(new Date(), 72)),
+  rentalLoanDeposit: '50',
+  rentalNewCopyGameId: '',
+  rentalNewCopyBarcode: '',
+  rentalNewCopyLocation: '',
+  rentalNewCopyDeposit: '50',
 };
 
 function pad(n) {
@@ -1875,6 +1893,168 @@ async function renderBillingPage() {
   return `<div class="page-hero"><div class="eyebrow">Billing</div><h2>订单与计费</h2><p>查看订单列表、收入统计和优惠分析</p></div>${html}`;
 }
 
+// =====================================================================
+// Phase B: 桌游租借管理页
+// =====================================================================
+async function renderRentalPage() {
+  const token = window.localStorage.getItem(AUTH_KEY) || '';
+  const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const tab = state.rentalTab || 'active';
+
+  let stats = { total: 0, available: 0, lent: 0, overdueLoans: 0, activeLoans: 0, maintenance: 0 };
+  let rows = [];
+  try {
+    const [statsRes, loansRes] = await Promise.all([
+      fetch('/api/rental/stats', { headers: h }),
+      fetch(`/api/rental/loans?status=${tab === 'copies' ? 'active' : tab}`, { headers: h }),
+    ]);
+    stats = await statsRes.json();
+    if (tab !== 'copies') rows = (await loansRes.json()).data || [];
+  } catch (e) { /* fall through to empty */ }
+
+  let copies = [];
+  if (tab === 'copies') {
+    try {
+      const res = await fetch('/api/rental/copies', { headers: h });
+      copies = (await res.json()).data || [];
+    } catch (e) { /* empty */ }
+  }
+
+  const statCards = `
+    <div class="stat-grid" style="padding-top:28px">
+      <div class="stat-card"><div class="stat-value">${stats.total||0}</div><div class="stat-label">副本总数</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--green)">${stats.available||0}</div><div class="stat-label">可借出</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--amber)">${stats.lent||0}</div><div class="stat-label">借出中</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--rose)">${stats.overdueLoans||0}</div><div class="stat-label">已逾期</div></div>
+    </div>`;
+
+  const tabs = `
+    <div class="tabs">
+      <button class="tab ${tab==='active'?'active':''}" data-rental-tab="active">借出中</button>
+      <button class="tab ${tab==='overdue'?'active':''}" data-rental-tab="overdue">已逾期</button>
+      <button class="tab ${tab==='returned'?'active':''}" data-rental-tab="returned">已归还</button>
+      <button class="tab ${tab==='copies'?'active':''}" data-rental-tab="copies">库存副本</button>
+    </div>`;
+
+  let body;
+  if (tab === 'copies') {
+    body = renderRentalCopiesTable(copies);
+  } else {
+    body = renderRentalLoansTable(rows, tab);
+  }
+
+  const toolbar = `
+    <div class="toolbar">
+      <div style="flex:1"></div>
+      ${tab === 'copies'
+        ? '<button class="btn btn-primary" id="btn-add-copy">+ 新增副本</button>'
+        : '<button class="btn btn-primary" id="btn-new-loan">+ 借出登记</button>'}
+    </div>`;
+
+  return `<div class="page-hero"><div class="eyebrow">Rental</div><h2>桌游租借管理</h2><p>管理实体桌游库存、借出归还、押金与逾期</p></div>
+    ${statCards}
+    ${tabs}
+    ${toolbar}
+    <div class="apple-card" style="padding:0;overflow:hidden">${body}</div>
+    ${renderRentalModals()}`;
+}
+
+function renderRentalLoansTable(rows, tab) {
+  if (!rows.length) return `<div class="empty-state" style="padding:40px"><div class="icon">📦</div><h3>暂无记录</h3></div>`;
+  return `
+    <table class="data-table">
+      <thead><tr><th>桌游</th><th>借出人</th><th>借出时间</th><th>应还时间</th><th>押金</th><th>状态</th>${tab!=='returned'?'<th>操作</th>':'<th>归还时间</th>'}</tr></thead>
+      <tbody>
+        ${rows.map(l => {
+          const overdue = l.isOverdue && l.status === 'active';
+          const statusBadge = l.status === 'returned'
+            ? '<span class="badge badge-green">已归还</span>'
+            : l.status === 'lost' ? '<span class="badge badge-rose">丢失</span>'
+            : overdue ? '<span class="badge badge-rose">逾期</span>' : '<span class="badge badge-amber">借出中</span>';
+          return `<tr>
+            <td><strong>${escapeHtml(l.gameTitle)}</strong>${l.barcode?`<br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(l.barcode)}</span>`:''}</td>
+            <td>${escapeHtml(l.playerName||'散客')}${l.playerPhone?`<br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(l.playerPhone)}</span>`:''}</td>
+            <td style="font-size:13px">${formatDateTime(l.borrowedAt)}</td>
+            <td style="font-size:13px;${overdue?'color:var(--rose);font-weight:700':''}">${l.dueAt?formatDateTime(l.dueAt):'—'}</td>
+            <td>¥${((l.depositCents||0)/100).toFixed(0)}</td>
+            <td>${statusBadge}</td>
+            ${tab!=='returned'
+              ? `<td><div class="action-group">
+                  <button class="btn btn-secondary btn-sm" data-loan-return="${l.id}" type="button">归还</button>
+                  <button class="btn btn-ghost btn-sm" style="color:var(--rose)" data-loan-lost="${l.id}" type="button">标记丢失</button>
+                </div></td>`
+              : `<td style="font-size:13px">${l.returnedAt?formatDateTime(l.returnedAt):'—'}</td>`}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderRentalCopiesTable(copies) {
+  if (!copies.length) return `<div class="empty-state" style="padding:40px"><div class="icon">🎲</div><h3>暂无副本</h3><p>点击"新增副本"登记实体桌游</p></div>`;
+  const statusMap = { available: ['可借','badge-green'], lent: ['借出中','badge-amber'], maintenance: ['维护中','badge-blue'], lost: ['丢失','badge-rose'] };
+  return `
+    <table class="data-table">
+      <thead><tr><th>桌游</th><th>条码</th><th>位置</th><th>建议押金</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        ${copies.map(c => {
+          const [label, cls] = statusMap[c.status] || [c.status, 'badge-blue'];
+          return `<tr>
+            <td><strong>${escapeHtml(c.gameTitle)}</strong></td>
+            <td>${escapeHtml(c.barcode||'—')}</td>
+            <td>${escapeHtml(c.location||'—')}</td>
+            <td>¥${((c.depositCents||0)/100).toFixed(0)}</td>
+            <td><span class="badge ${cls}">${label}</span></td>
+            <td>${c.status!=='lent'?`<button class="btn btn-ghost btn-sm" style="color:var(--rose)" data-copy-delete="${c.id}" type="button">删除</button>`:'<span style="font-size:12px;color:var(--text-soft)">借出中</span>'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderRentalModals() {
+  const gameOptions = state.games.map((g) => `<option value="${g.id}">${escapeHtml(g.title)}</option>`).join('');
+  const playerOptions = state.players.map((p) => `<option value="${p.id}">${escapeHtml(p.displayName)}</option>`).join('');
+  return `
+    <div id="loan-modal" class="modal-overlay" style="display:none">
+      <div class="modal-dialog">
+        <div class="modal-header"><h3>借出登记</h3><button class="modal-close" id="btn-close-loan-modal">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label>桌游 *</label><select class="form-input" data-field="rentalLoanGameId"><option value="">选择桌游…</option>${gameOptions}</select></div>
+          <div class="form-group"><label>可借副本 *</label><select class="form-input" id="loan-copy-select" data-field="rentalLoanCopyId"><option value="">请先选择桌游</option></select></div>
+          <div class="form-group"><label>借出人（会员）</label><select class="form-input" data-field="rentalLoanPlayerId"><option value="">散客</option>${playerOptions}</select></div>
+          <div class="form-row">
+            <div class="form-group"><label>应还时间</label><input type="datetime-local" class="form-input" data-field="rentalLoanDueAt" value="${escapeAttr(state.rentalLoanDueAt)}" /></div>
+            <div class="form-group"><label>押金（元）</label><input type="number" class="form-input" data-field="rentalLoanDeposit" value="${escapeAttr(state.rentalLoanDeposit)}" /></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btn-cancel-loan">取消</button>
+          <button class="btn btn-primary" id="btn-save-loan">确认借出</button>
+        </div>
+      </div>
+    </div>
+    <div id="copy-modal" class="modal-overlay" style="display:none">
+      <div class="modal-dialog">
+        <div class="modal-header"><h3>新增副本</h3><button class="modal-close" id="btn-close-copy-modal">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label>桌游 *</label><select class="form-input" data-field="rentalNewCopyGameId"><option value="">选择桌游…</option>${gameOptions}</select></div>
+          <div class="form-row">
+            <div class="form-group"><label>条码/编号</label><input type="text" class="form-input" data-field="rentalNewCopyBarcode" value="${escapeAttr(state.rentalNewCopyBarcode)}" placeholder="如 BG-001" /></div>
+            <div class="form-group"><label>存放位置</label><input type="text" class="form-input" data-field="rentalNewCopyLocation" value="${escapeAttr(state.rentalNewCopyLocation)}" placeholder="如 A架2层" /></div>
+          </div>
+          <div class="form-group"><label>建议押金（元）</label><input type="number" class="form-input" data-field="rentalNewCopyDeposit" value="${escapeAttr(state.rentalNewCopyDeposit)}" /></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btn-cancel-copy">取消</button>
+          <button class="btn btn-primary" id="btn-save-copy">保存</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+
+
 async function renderPageContent(summary) {
   if (state.activePage === 'tables') return renderTablesPage();
   if (state.activePage === 'members') return renderMembersPage();
@@ -1885,6 +2065,7 @@ async function renderPageContent(summary) {
   if (state.activePage === 'games') return await renderGameManagementPage();
   if (state.activePage === 'coupons') return await renderCouponsPage();
   if (state.activePage === 'billing') return await renderBillingPage();
+  if (state.activePage === 'rental') return await renderRentalPage();
   if (state.activePage === 'staff-mgmt') return await renderStaffAdminPage();
   return renderDashboardPage(summary);
 }
@@ -1916,7 +2097,7 @@ async function render() {
   const page = currentPageMeta();
   const venueName = state.venue?.name || '桌游门店';
   const pageContent = await renderPageContent(summary);
-  const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing';
+  const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental';
   $('#app').innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -2131,6 +2312,31 @@ function bind() {
   $('#btn-cancel-coupon')?.addEventListener('click', () => { $('#coupon-modal').style.display = 'none'; });
   $('#btn-save-coupon')?.addEventListener('click', () => void onSaveCoupon());
   $('#coupon-modal')?.addEventListener('click', (e) => { if (e.target.id === 'coupon-modal') e.target.style.display = 'none'; });
+
+  // ---- Rental Management ----
+  root.querySelectorAll('[data-rental-tab]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.rentalTab = button.getAttribute('data-rental-tab');
+      render();
+    })
+  );
+  $('#btn-new-loan')?.addEventListener('click', () => { populateLoanCopies(); $('#loan-modal').style.display = 'flex'; });
+  $('#btn-close-loan-modal')?.addEventListener('click', () => { $('#loan-modal').style.display = 'none'; });
+  $('#btn-cancel-loan')?.addEventListener('click', () => { $('#loan-modal').style.display = 'none'; });
+  $('#btn-save-loan')?.addEventListener('click', () => void onSaveLoan());
+  $('#loan-modal')?.addEventListener('click', (e) => { if (e.target.id === 'loan-modal') e.target.style.display = 'none'; });
+  root.querySelector('[data-field="rentalLoanGameId"]')?.addEventListener('change', () => void populateLoanCopies());
+  $('#btn-add-copy')?.addEventListener('click', () => { $('#copy-modal').style.display = 'flex'; });
+  $('#btn-close-copy-modal')?.addEventListener('click', () => { $('#copy-modal').style.display = 'none'; });
+  $('#btn-cancel-copy')?.addEventListener('click', () => { $('#copy-modal').style.display = 'none'; });
+  $('#btn-save-copy')?.addEventListener('click', () => void onSaveCopy());
+  $('#copy-modal')?.addEventListener('click', (e) => { if (e.target.id === 'copy-modal') e.target.style.display = 'none'; });
+  root.querySelectorAll('[data-loan-return]').forEach((button) =>
+    button.addEventListener('click', () => void onReturnLoan(Number(button.getAttribute('data-loan-return')), false)));
+  root.querySelectorAll('[data-loan-lost]').forEach((button) =>
+    button.addEventListener('click', () => void onReturnLoan(Number(button.getAttribute('data-loan-lost')), true)));
+  root.querySelectorAll('[data-copy-delete]').forEach((button) =>
+    button.addEventListener('click', () => void onDeleteCopy(Number(button.getAttribute('data-copy-delete')))));
 }
 
 async function onLogin() {
@@ -2729,6 +2935,88 @@ async function onSaveCoupon() {
     showToast('优惠券创建成功');
     $('#coupon-modal').style.display = 'none';
     form.reset();
+    await refresh();
+  } catch (e) { showToast(e.message, 'err'); }
+}
+
+// ---- Rental actions ----
+async function populateLoanCopies() {
+  const sel = document.getElementById('loan-copy-select');
+  if (!sel) return;
+  const gameId = state.rentalLoanGameId;
+  if (!gameId) { sel.innerHTML = '<option value="">请先选择桌游</option>'; return; }
+  try {
+    const token = window.localStorage.getItem(AUTH_KEY) || '';
+    const res = await fetch(`/api/rental/copies?gameId=${gameId}`, { headers: { Authorization: `Bearer ${token}` } });
+    const copies = ((await res.json()).data || []).filter((c) => c.status === 'available');
+    sel.innerHTML = copies.length
+      ? copies.map((c) => `<option value="${c.id}">${escapeHtml(c.barcode || '副本 #' + c.id)}${c.location ? ' · ' + escapeHtml(c.location) : ''}</option>`).join('')
+      : '<option value="">该桌游暂无可借副本</option>';
+    state.rentalLoanCopyId = copies[0]?.id || '';
+  } catch (e) { sel.innerHTML = '<option value="">加载失败</option>'; }
+}
+
+async function onSaveLoan() {
+  if (!requireLive()) return;
+  const copyId = Number(state.rentalLoanCopyId);
+  if (!copyId) { showToast('请选择可借副本', 'err'); return; }
+  try {
+    await api('/api/rental/loans', {
+      method: 'POST',
+      body: JSON.stringify({
+        copyId,
+        playerId: state.rentalLoanPlayerId ? Number(state.rentalLoanPlayerId) : null,
+        dueAt: state.rentalLoanDueAt ? localInputToMysqlDatetime(state.rentalLoanDueAt) : null,
+        depositCents: Math.round(Number(state.rentalLoanDeposit || 0) * 100),
+      }),
+    });
+    showToast('借出登记成功');
+    $('#loan-modal').style.display = 'none';
+    await refresh();
+  } catch (e) { showToast(e.message, 'err'); }
+}
+
+async function onReturnLoan(loanId, markLost) {
+  if (!requireLive()) return;
+  if (markLost && !window.confirm('确定标记为丢失吗？该副本将不可借出。')) return;
+  try {
+    const result = await api(`/api/rental/loans/${loanId}/return`, {
+      method: 'POST',
+      body: JSON.stringify({ markLost }),
+    });
+    showToast(markLost ? '已标记丢失' : result?.overdue ? '已归还（此前已逾期）' : '已归还');
+    await refresh();
+  } catch (e) { showToast(e.message, 'err'); }
+}
+
+async function onSaveCopy() {
+  if (!requireLive()) return;
+  const gameId = Number(state.rentalNewCopyGameId);
+  if (!gameId) { showToast('请选择桌游', 'err'); return; }
+  try {
+    await api('/api/rental/copies', {
+      method: 'POST',
+      body: JSON.stringify({
+        gameId,
+        barcode: state.rentalNewCopyBarcode || null,
+        location: state.rentalNewCopyLocation || null,
+        depositCents: Math.round(Number(state.rentalNewCopyDeposit || 0) * 100),
+      }),
+    });
+    showToast('副本已新增');
+    $('#copy-modal').style.display = 'none';
+    state.rentalNewCopyBarcode = '';
+    state.rentalNewCopyLocation = '';
+    await refresh();
+  } catch (e) { showToast(e.message, 'err'); }
+}
+
+async function onDeleteCopy(copyId) {
+  if (!requireLive()) return;
+  if (!window.confirm('确定删除该副本吗？')) return;
+  try {
+    await api(`/api/rental/copies/${copyId}`, { method: 'DELETE' });
+    showToast('副本已删除');
     await refresh();
   } catch (e) { showToast(e.message, 'err'); }
 }
