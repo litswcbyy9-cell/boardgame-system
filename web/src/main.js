@@ -1,5 +1,6 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const AUTH_KEY = 'boardgame.auth.token';
+const SIDEBAR_KEY = 'boardgame.sidebar.collapsed';
 const ALLOW_PUBLIC_REGISTER = import.meta.env.VITE_ALLOW_PUBLIC_REGISTER === '1';
 let refreshTimer = null;
 
@@ -218,6 +219,7 @@ const state = {
   selectedMemberId: null,
   selectedStaffId: null,
   activePage: pageFromHash(),
+  sidebarCollapsed: window.localStorage.getItem(SIDEBAR_KEY) === '1',
   authToken: window.localStorage.getItem(AUTH_KEY) || '',
   currentUser: null,
   authMode: 'login',
@@ -1380,16 +1382,18 @@ const navEmoji = {
 };
 
 function renderNav() {
+  const collapsed = state.sidebarCollapsed;
   return navItems
     .map((item) => {
       const active = state.activePage === item.id;
       return `
         <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
-          class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${active
+          title="${escapeAttr(item.label)}"
+          class="flex items-center ${collapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-sm font-medium transition ${active
             ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
             : 'text-white/65 hover:text-white hover:bg-white/10'}">
           <span class="text-base leading-none">${navEmoji[item.id] || '•'}</span>
-          <span>${escapeHtml(item.label)}</span>
+          ${collapsed ? '' : `<span>${escapeHtml(item.label)}</span>`}
         </a>`;
     })
     .join('');
@@ -2178,8 +2182,8 @@ async function render() {
   const pageContent = await renderPageContent(summary);
   const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental' || page.id === 'ai';
   $('#app').innerHTML = `
-    <div data-theme="bgcafe" class="grid grid-cols-1 lg:grid-cols-[230px_1fr] min-h-screen bg-base-200">
-      <aside class="hidden lg:flex flex-col gap-1 sticky top-0 h-screen p-3 bg-neutral text-neutral-content">
+    <div data-theme="bgcafe" class="grid grid-cols-1 ${state.sidebarCollapsed ? 'lg:grid-cols-[72px_1fr]' : 'lg:grid-cols-[230px_1fr]'} min-h-screen bg-base-200">
+      <aside class="hidden lg:flex flex-col gap-1 sticky top-0 h-screen ${state.sidebarCollapsed ? 'p-2' : 'p-3'} bg-neutral text-neutral-content">
         <a class="flex items-center justify-center py-4" href="#/dashboard" data-page="dashboard">
           <span class="grid place-items-center w-11 h-11 rounded-2xl bg-gradient-to-br from-orange-500 to-purple-600 text-2xl shadow-lg">🎲</span>
         </a>
@@ -2187,7 +2191,10 @@ async function render() {
           ${renderNav()}
         </nav>
         <div class="mt-auto pt-2">
-          <span class="block text-center text-[11px] text-white/50 py-2">● ${escapeHtml(state.health)}</span>
+          <button class="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-white/55 hover:text-white hover:bg-white/10 text-sm transition" data-sidebar-toggle type="button" title="${state.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}">
+            <span>${state.sidebarCollapsed ? '»' : '«'}</span>${state.sidebarCollapsed ? '' : '<span>收起</span>'}
+          </button>
+          ${state.sidebarCollapsed ? '' : `<span class="block text-center text-[11px] text-white/40 py-1">● ${escapeHtml(state.health)}</span>`}
         </div>
       </aside>
       <main class="min-w-0 flex flex-col" id="page-${escapeAttr(page.id)}">
@@ -2237,6 +2244,11 @@ function bind() {
   root.querySelector('[data-login]')?.addEventListener('click', () => void onLogin());
   root.querySelector('[data-register]')?.addEventListener('click', () => void onRegister());
   root.querySelector('[data-logout]')?.addEventListener('click', () => void onLogout());
+  root.querySelector('[data-sidebar-toggle]')?.addEventListener('click', () => {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    window.localStorage.setItem(SIDEBAR_KEY, state.sidebarCollapsed ? '1' : '0');
+    render();
+  });
   root.querySelectorAll('[data-refresh]').forEach((button) => button.addEventListener('click', () => void refresh()));
   root.querySelectorAll('[data-lb-sort]').forEach((button) =>
     button.addEventListener('click', () => {
