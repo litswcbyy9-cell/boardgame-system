@@ -43,14 +43,6 @@ const navItems = [
     description: '管理员工工号、岗位、联系方式和后台登录账号。',
   },
   {
-    id: 'recommend',
-    label: '智能推荐',
-    icon: 'recommend',
-    eyebrow: 'Recommendation',
-    title: '智能桌游与桌位推荐',
-    description: '根据人数、时长、会员偏好和预约时段生成可解释推荐。',
-  },
-  {
     id: 'sessions',
     label: '对局战绩',
     icon: 'workflow',
@@ -1257,90 +1249,6 @@ function renderStaffPage() {
     </section>`;
 }
 
-function renderRecommendations() {
-  const selected = selectedMember();
-  const categoryOptions = [...new Set(state.games.map((game) => game.category).filter(Boolean))];
-  const updated = state.recommendationUpdatedAt ? `最近生成 ${formatTime(state.recommendationUpdatedAt)}` : '基于历史对局与当前预约条件';
-  const gameCards = state.gameRecommendations
-    .map(
-      (game) => `
-        <article class="recommend-card">
-          <img src="${escapeAttr(game.coverImageUrl || 'https://images.unsplash.com/photo-1606092195730-5d7b9af1efc5?auto=format&fit=crop&w=520&q=80')}" alt="${escapeAttr(game.title)}封面" loading="lazy" />
-          <div class="recommend-card-body">
-            <div class="recommend-title">
-              <strong>${escapeHtml(game.title)}</strong>
-              <b>${Number(game.score || 0).toFixed(1)}</b>
-            </div>
-            <div class="score-bar" aria-label="推荐分数 ${Number(game.score || 0).toFixed(1)}"><i style="width:${scoreWidth(game.score)}"></i></div>
-            <p>${escapeHtml(game.reason || '综合匹配人数、时长、会员偏好和近期热度。')}</p>
-            <div class="tag-row">
-              <span>${escapeHtml(game.category || '综合')}</span>
-              <span>${game.minPlayers || 1}-${game.maxPlayers || 8} 人</span>
-              <span>${game.avgMinutes || 90} 分钟</span>
-              <span>难度 ${game.difficultyLevel || 3}</span>
-            </div>
-          </div>
-        </article>`
-    )
-    .join('');
-
-  const tableRows = state.tableRecommendations
-    .map(
-      (table) => `
-        <div class="recommend-table-row">
-          <div>
-            <div class="recommend-title compact">
-              <strong>${escapeHtml(table.code)}</strong>
-              <b>${Number(table.score || 0).toFixed(1)}</b>
-            </div>
-            <span>${table.seatCapacity || 4} 人 · ${escapeHtml(areaTypeText(table.areaType))} · ${statusText[table.status] || table.status}</span>
-            <p>${escapeHtml(table.reason || '该时段无冲突预约，容量与人数较匹配。')}</p>
-          </div>
-          <button class="btn btn-secondary btn-sm" data-recommend-table="${table.tableId}" type="button">选中桌位</button>
-        </div>`
-    )
-    .join('');
-
-  return `
-    <section class="panel recommend-panel" id="recommend">
-      <div class="section-head">
-        <div>
-          <h2>智能推荐</h2>
-          <span>${escapeHtml(updated)}</span>
-        </div>
-        <button class="btn btn-primary" data-recommend type="button">生成推荐</button>
-      </div>
-      <div class="recommend-controls">
-        <label class="field">
-          <span>会员偏好</span>
-          <select class="input" data-field="recommendPlayerId">
-            <option value="">当前选中会员${selected ? `：${escapeHtml(selected.displayName)}` : ''}</option>
-            ${state.players.map((p) => `<option value="${p.id}" ${String(state.recommendPlayerId) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.displayName)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="field"><span>预约人数</span><input class="input" type="number" min="1" max="20" data-field="recommendPartySize" value="${escapeAttr(state.recommendPartySize)}" /></label>
-        <label class="field"><span>预计时长（分钟）</span><input class="input" type="number" min="10" max="600" step="10" data-field="recommendMinutes" value="${escapeAttr(state.recommendMinutes)}" /></label>
-        <label class="field">
-          <span>偏好类型</span>
-          <select class="input" data-field="recommendCategory">
-            <option value="">不限类型</option>
-            ${categoryOptions.map((category) => `<option value="${escapeAttr(category)}" ${state.recommendCategory === category ? 'selected' : ''}>${escapeHtml(category)}</option>`).join('')}
-          </select>
-        </label>
-      </div>
-      <div class="recommend-grid">
-        <div>
-          <div class="mini-section-head"><strong>推荐桌游 Top 5</strong><span>混合评分模型</span></div>
-          <div class="recommend-card-list">${gameCards || '<div class="empty-state compact">点击生成推荐后显示桌游结果。</div>'}</div>
-        </div>
-        <div>
-          <div class="mini-section-head"><strong>推荐桌位</strong><span>容量与冲突检测</span></div>
-          <div class="recommend-table-list">${tableRows || '<div class="empty-state compact">点击生成推荐后显示可用桌位。</div>'}</div>
-        </div>
-      </div>
-    </section>`;
-}
-
 function renderReservations() {
   if (!state.reservations.length) return '<div class="empty-state compact">暂无待处理预约。</div>';
   return state.reservations
@@ -1524,10 +1432,6 @@ function renderMembersPage() {
 
 function renderStaffManagementPage() {
   return renderStaffPage();
-}
-
-function renderRecommendPage() {
-  return renderRecommendations();
 }
 
 function renderSessionsPage() {
@@ -2198,7 +2102,7 @@ function renderRentalModals() {
 // Phase D: AI 经营助手页
 // =====================================================================
 function renderAiAssistantPage() {
-  const suggestions = ['今天生意怎么样？', '哪些桌游最受欢迎？', '现在有多少空桌？', '哪个桌位用得最多？'];
+  const suggestions = ['今天生意怎么样？', '推荐 4 人玩 2 小时的策略游戏', '有什么适合新手的桌游？', '现在有多少空桌？', '哪些桌游最受欢迎？'];
   const messages = state.aiMessages || [];
   const bubbles = messages.length
     ? messages
@@ -2209,13 +2113,13 @@ function renderAiAssistantPage() {
         .join('')
     : `<div class="ai-empty">
         <div class="ai-empty-icon">🤖</div>
-        <p>问我关于经营数据、桌游推荐的任何问题</p>
+        <p>问我经营数据、桌游推荐、运营建议的任何问题</p>
         <div class="ai-suggestions">
           ${suggestions.map((s) => `<button class="ai-chip" data-ai-suggest="${escapeAttr(s)}" type="button">${escapeHtml(s)}</button>`).join('')}
         </div>
       </div>`;
 
-  return `<div class="page-hero"><div class="eyebrow">AI Assistant</div><h2>AI 经营助手</h2><p>用自然语言查询经营数据，获取桌游与运营建议</p></div>
+  return `<div class="page-hero"><div class="eyebrow">AI Assistant</div><h2>AI 经营助手</h2><p>用自然语言查询经营数据、智能推荐桌游、获取运营建议</p></div>
     <div class="ai-chat-panel apple-card" style="padding:0;overflow:hidden">
       <div class="ai-chat-log" id="ai-chat-log">
         ${bubbles}
@@ -2234,7 +2138,6 @@ async function renderPageContent(summary) {
   if (state.activePage === 'tables') return renderTablesPage();
   if (state.activePage === 'members') return renderMembersPage();
   if (state.activePage === 'staff') return renderStaffManagementPage();
-  if (state.activePage === 'recommend') return renderRecommendPage();
   if (state.activePage === 'sessions') return renderSessionsPage();
   if (state.activePage === 'reports') return renderReportsPage();
   if (state.activePage === 'games') return await renderGameManagementPage();
@@ -2413,7 +2316,6 @@ function bind() {
       render();
     })
   );
-  root.querySelector('[data-recommend]')?.addEventListener('click', onRecommend);
   root.querySelector('[data-member-create]')?.addEventListener('click', onCreateMember);
   root.querySelectorAll('[data-member-recharge]').forEach((button) => button.addEventListener('click', () => onMemberMoney(button, 'recharge')));
   root.querySelectorAll('[data-member-consume]').forEach((button) => button.addEventListener('click', () => onMemberMoney(button, 'consume')));
@@ -2424,12 +2326,6 @@ function bind() {
   root.querySelectorAll('[data-staff-account]').forEach((button) => button.addEventListener('click', () => void onCreateStaffAccount(Number(button.getAttribute('data-staff-account')))));
   root.querySelectorAll('[data-checkin]').forEach((button) => button.addEventListener('click', () => void onCheckin(Number(button.getAttribute('data-checkin')))));
   root.querySelectorAll('[data-cancel]').forEach((button) => button.addEventListener('click', () => void onCancel(Number(button.getAttribute('data-cancel')))));
-  root.querySelectorAll('[data-recommend-table]').forEach((button) =>
-    button.addEventListener('click', () => {
-      state.selectedId = Number(button.getAttribute('data-recommend-table'));
-      navigateToPage('tables');
-    })
-  );
   root.querySelectorAll('[data-reservation-table]').forEach((button) =>
     button.addEventListener('click', () => {
       state.selectedId = Number(button.getAttribute('data-reservation-table'));
@@ -2580,38 +2476,6 @@ async function onLogout() {
   }
   setAuth('', null);
   render();
-}
-
-async function onRecommend() {
-  const partySize = Math.max(1, Math.min(20, Number(state.recommendPartySize || 4)));
-  const minutes = Math.max(10, Math.min(600, Number(state.recommendMinutes || 120)));
-  state.recommendPartySize = partySize;
-  state.recommendMinutes = minutes;
-
-  if (state.mode !== 'live') {
-    state.gameRecommendations = demoData.gameRecommendations;
-    state.tableRecommendations = demoData.tableRecommendations;
-    state.recommendationUpdatedAt = new Date().toISOString();
-    showToast('当前使用演示推荐数据');
-    render();
-    return;
-  }
-
-  const playerId = state.recommendPlayerId || state.selectedMemberId || '';
-  const category = encodeURIComponent(state.recommendCategory || '');
-  const gameUrl = `/api/recommendations/games?playerId=${encodeURIComponent(playerId)}&partySize=${partySize}&minutes=${minutes}&category=${category}`;
-  const tableUrl = `/api/recommendations/tables?partySize=${partySize}&startAt=${encodeURIComponent(localInputToMysqlDatetime(state.startAt))}&endAt=${encodeURIComponent(localInputToMysqlDatetime(state.endAt))}`;
-
-  try {
-    const [games, tables] = await Promise.all([api(gameUrl), api(tableUrl)]);
-    state.gameRecommendations = games;
-    state.tableRecommendations = tables;
-    state.recommendationUpdatedAt = new Date().toISOString();
-    showToast('智能推荐已生成');
-    render();
-  } catch (error) {
-    showToast(error.message, 'err');
-  }
 }
 
 function normalizedPartySize(value) {

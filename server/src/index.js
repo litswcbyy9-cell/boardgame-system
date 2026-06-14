@@ -1913,6 +1913,10 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
       `SELECT SUM(status='idle') AS idle, SUM(status='reserved') AS reserved, SUM(status='occupied') AS occupied FROM game_table_state`
     );
     const [[memberCount]] = await pool.query("SELECT COUNT(*) AS total FROM players WHERE status='active'");
+    const [games] = await pool.query(
+      `SELECT title, category, min_players AS minP, max_players AS maxP, avg_minutes AS mins, difficulty_level AS diff
+       FROM games ORDER BY recommend_weight DESC LIMIT 40`
+    );
 
     const context = {
       日期: today,
@@ -1922,11 +1926,12 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
       活跃会员数: Number(memberCount?.total) || 0,
       热门桌游TOP5: (popularity || []).slice(0, 5).map((p) => ({ 名称: p.title || p.game_title, 局数: p.record_count ?? p.play_count })),
       热门桌位TOP5: (tableUtil || []).slice(0, 5).map((t) => ({ 桌位: t.code, 场次: t.settled_sessions_in_range ?? t.sessions })),
+      桌游目录: games.map((g) => ({ 名称: g.title, 分类: g.category, 人数: `${g.minP}-${g.maxP}`, 时长分钟: g.mins, 难度: g.diff })),
     };
     const { content, mock } = await callLLM([
-      { role: 'system', content: '你是桌游馆运营助手。根据提供的 JSON 经营数据用简洁中文回答店员的问题。只依据数据回答，数据没有的就说暂无该数据。不要编造数字。' },
-      { role: 'user', content: `经营数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
-    ], { temperature: 0.3, maxTokens: 2500 });
+      { role: 'system', content: '你是桌游馆运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
+      { role: 'user', content: `数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
+    ], { temperature: 0.4, maxTokens: 2500 });
     res.json({ answer: content.trim(), data: context, mock });
   } catch (e) {
     console.error('[ERROR] ai ask:', e);
