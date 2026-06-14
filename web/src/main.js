@@ -220,6 +220,10 @@ const state = {
   selectedStaffId: null,
   activePage: pageFromHash(),
   sidebarCollapsed: window.localStorage.getItem(SIDEBAR_KEY) === '1',
+  petOpen: false,
+  petMessages: [],
+  petInput: '',
+  petLoading: false,
   authToken: window.localStorage.getItem(AUTH_KEY) || '',
   currentUser: null,
   authMode: 'login',
@@ -2136,7 +2140,36 @@ function renderAiAssistantPage() {
     </div>`;
 }
 
-
+// 常驻 AI 桌宠（骰子猫）：后台所有页右下角浮动，点击弹聊天窗
+function renderPetWidget() {
+  const open = state.petOpen;
+  const messages = state.petMessages || [];
+  const bubbles = messages.length
+    ? messages.map((m) => `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div></div>`).join('')
+    : '<div class="cust-chat-hello">喵～我是骰子猫 🐾 问我经营数据、桌游推荐都行！</div>';
+  return `
+    <div class="pet-widget">
+      ${open ? `
+        <div class="pet-window">
+          <div class="pet-head">
+            <strong>🐱 骰子猫助手</strong>
+            <button class="cust-chat-close" data-pet-close type="button">×</button>
+          </div>
+          <div class="pet-log" id="pet-log">
+            ${bubbles}
+            ${state.petLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing"><span class="loading loading-dots loading-sm"></span> 喵～想想</div></div>' : ''}
+          </div>
+          <div class="pet-input">
+            <input class="input" id="pet-input" data-field="petInput" placeholder="问问骰子猫…" value="${escapeAttr(state.petInput || '')}" />
+            <button class="btn btn-primary btn-sm" data-pet-send type="button" ${state.petLoading ? 'disabled' : ''}>发送</button>
+          </div>
+        </div>` : ''}
+      <button class="pet-fab ${open ? 'is-open' : ''}" data-pet-toggle type="button" title="骰子猫 AI 助手" aria-label="AI 助手">
+        <span class="pet-cat">🐱</span>
+        ${open ? '' : '<span class="pet-bubble-dot"></span>'}
+      </button>
+    </div>`;
+}
 
 async function renderPageContent(summary) {
   if (state.activePage === 'tables') return renderTablesPage();
@@ -2213,6 +2246,7 @@ async function render() {
         ${state.err ? `<div class="notice mx-5 sm:mx-7 mt-4">${escapeHtml(state.err)}</div>` : ''}
         <div class="px-5 sm:px-7 pb-10">${pageContent}</div>
       </main>
+      ${renderPetWidget()}
     </div>`;
   bind();
 }
@@ -2249,6 +2283,12 @@ function bind() {
     window.localStorage.setItem(SIDEBAR_KEY, state.sidebarCollapsed ? '1' : '0');
     render();
   });
+  root.querySelector('[data-pet-toggle]')?.addEventListener('click', () => { state.petOpen = !state.petOpen; render(); });
+  root.querySelector('[data-pet-close]')?.addEventListener('click', () => { state.petOpen = false; render(); });
+  root.querySelector('[data-pet-send]')?.addEventListener('click', () => void onPetSend());
+  $('#pet-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void onPetSend(); } });
+  const petLog = $('#pet-log');
+  if (petLog) petLog.scrollTop = petLog.scrollHeight;
   root.querySelectorAll('[data-refresh]').forEach((button) => button.addEventListener('click', () => void refresh()));
   root.querySelectorAll('[data-lb-sort]').forEach((button) =>
     button.addEventListener('click', () => {
@@ -3135,6 +3175,24 @@ async function onAiSend() {
     state.aiMessages.push({ role: 'assistant', content: `出错了：${e.message}` });
   } finally {
     state.aiLoading = false;
+    render();
+  }
+}
+
+async function onPetSend() {
+  const question = String(state.petInput || '').trim();
+  if (!question || state.petLoading) return;
+  state.petMessages.push({ role: 'user', content: question });
+  state.petInput = '';
+  state.petLoading = true;
+  render();
+  try {
+    const result = await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ question }) });
+    state.petMessages.push({ role: 'assistant', content: result.answer || '（无回答）' });
+  } catch (e) {
+    state.petMessages.push({ role: 'assistant', content: `喵呜…出错了：${e.message}` });
+  } finally {
+    state.petLoading = false;
     render();
   }
 }
