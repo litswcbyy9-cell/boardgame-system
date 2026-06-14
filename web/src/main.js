@@ -1108,14 +1108,14 @@ function renderMembers() {
 
   return `
     <section class="panel members-panel" id="members">
-      <div class="section-head">
+      <div class="flex flex-wrap items-end justify-between gap-4 mb-5">
         <div>
-          <h2>会员管理</h2>
-          <span>查看资料、新增会员、充值、扣费和停用会员</span>
+          <h2 class="text-2xl font-bold tracking-tight m-0">会员管理</h2>
+          <span class="text-sm text-base-content/55">查看资料、新增会员、充值、扣费和停用会员</span>
         </div>
-        <label class="member-search">
-          <span>搜索</span>
-          <input class="input" data-field="memberSearch" placeholder="姓名 / 手机 / 会员号" value="${escapeAttr(state.memberSearch)}" />
+        <label class="form-control w-full sm:w-80">
+          <span class="label-text text-xs font-semibold mb-1">搜索</span>
+          <input class="input input-bordered w-full rounded-xl" data-field="memberSearch" placeholder="姓名 / 手机 / 会员号" value="${escapeAttr(state.memberSearch)}" />
         </label>
       </div>
       <div class="members-grid">
