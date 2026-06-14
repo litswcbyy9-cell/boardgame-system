@@ -763,17 +763,18 @@ function healthClass() {
 
 function renderMetricCards(summary) {
   return [
-    ['空闲桌位', summary.idle, '可立即接待', 'ok'],
-    ['预约中', summary.reserved, '等待入场', 'warn'],
-    ['占用中', summary.occupied, '正在计时', 'danger'],
-    ['活跃会员', summary.members, `余额合计 ${yuan(state.members.reduce((sum, m) => sum + Number(m.balanceCents || 0), 0))}`, 'blue'],
+    ['空闲桌位', summary.idle, '可立即接待', 'from-emerald-400 to-teal-500', '🪑'],
+    ['预约中', summary.reserved, '等待入场', 'from-amber-400 to-orange-500', '📅'],
+    ['占用中', summary.occupied, '正在计时', 'from-rose-400 to-pink-500', '⏱️'],
+    ['活跃会员', summary.members, `余额合计 ${yuan(state.members.reduce((sum, m) => sum + Number(m.balanceCents || 0), 0))}`, 'from-sky-400 to-indigo-500', '👥'],
   ]
     .map(
-      ([label, value, hint, tone]) => `
-        <section class="metric metric--${tone}">
-          <span class="metric-label">${label}</span>
-          <strong class="metric-value">${value}</strong>
-          <span class="metric-hint">${hint}</span>
+      ([label, value, hint, grad, icon]) => `
+        <section class="relative overflow-hidden rounded-2xl bg-gradient-to-br ${grad} p-5 text-white shadow-lg transition-transform hover:-translate-y-1">
+          <span class="absolute -right-2 -top-2 text-6xl opacity-20">${icon}</span>
+          <span class="block text-sm font-medium opacity-90">${label}</span>
+          <strong class="my-1 block text-4xl font-extrabold leading-none tracking-tight">${value}</strong>
+          <span class="block text-xs opacity-80">${hint}</span>
         </section>`
     )
     .join('');
@@ -1473,17 +1474,26 @@ function renderNav() {
 }
 
 function renderDashboardPage(summary) {
+  const card = (title, badge, body) => `
+    <div class="card bg-base-100 shadow-md border border-base-200 rounded-2xl">
+      <div class="card-body p-5">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="card-title text-base font-bold">${title}</h2>
+          <span class="badge badge-ghost badge-sm">${badge}</span>
+        </div>
+        ${body}
+      </div>
+    </div>`;
   return `
-    <section class="metrics" aria-label="关键指标">${renderMetricCards(summary)}</section>
-    <section class="lower-grid dashboard-grid">
-      <div class="panel compact-panel"><div class="section-head"><h2>待处理预约</h2><span>${state.reservations.length} 条</span></div>${renderReservations()}</div>
-      <div class="panel compact-panel"><div class="section-head"><h2>进行中对局</h2><span>${state.openSessions.length} 局</span></div>${renderSessions()}</div>
-      <div class="panel compact-panel"><div class="section-head"><h2>会员排行</h2><span>胜率</span></div>${renderLeaderboard()}</div>
-    </section>
-    <section class="panel catalog">
-      <div class="section-head"><h2>桌游目录热度</h2><span>封面 / 人数 / 近 30 天</span></div>
-      <div class="game-grid">${renderGameCatalog()}</div>
-    </section>`;
+    <div class="dash-fresh space-y-5 pt-2">
+      <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="关键指标">${renderMetricCards(summary)}</section>
+      <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        ${card('待处理预约', `${state.reservations.length} 条`, renderReservations())}
+        ${card('进行中对局', `${state.openSessions.length} 局`, renderSessions())}
+        ${card('会员排行', '胜率', renderLeaderboard())}
+      </section>
+      ${card('桌游目录热度', '封面 / 人数 / 近 30 天', `<div class="game-grid mt-1">${renderGameCatalog()}</div>`)}
+    </div>`;
 }
 
 function renderTablesPage() {
@@ -1558,55 +1568,105 @@ function renderReportsPage() {
 function renderCustomerBookingPage() {
   const selectedTable = state.customerMatches.find((table) => Number(table.tableId) === Number(state.customerSelectedTableId));
   const games = state.games || [];
-  const diffLabels = {1:'入门',2:'简单',3:'中等',4:'较难',5:'重度'};
+  const diffLabels = { 1: '入门', 2: '简单', 3: '中等', 4: '较难', 5: '重度' };
 
   return `
-    <div class="customer-hero">
-      <h2>预约桌位，轻松开局</h2>
-      <p>选择人数和时间，系统自动匹配最合适的桌位。也可先浏览桌游目录，找到想玩的再预约。</p>
-    </div>
-    <div class="customer-layout">
-      <div class="booking-card">
-        <h3>${state.customerResult ? '预约成功 ✅' : '预约信息'}</h3>
-        ${state.customerResult
-          ? `<div class="success-panel">
-              <strong>预约已提交 #${state.customerResult.reservationId}</strong>
-              <span>${escapeHtml(state.customerResult.tableCode || '')} ${state.customerResult.seatCapacity || ''}人桌，请按时到店。</span>
-            </div>`
-          : ''}
-        <label class="field"><span>姓名</span><input class="input" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" placeholder="您的称呼" /></label>
-        <label class="field"><span>电话</span><input class="input" type="tel" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" placeholder="方便联系" /></label>
-        <label class="field"><span>人数</span><input class="input" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" /></label>
-        <div class="field-row">
-          <label class="field"><span>到店</span><input class="input" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" /></label>
-          <label class="field"><span>离店</span><input class="input" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" /></label>
+    <!-- Hero -->
+    <section class="relative overflow-hidden bg-gradient-to-br from-orange-500 via-pink-500 to-purple-600 text-white">
+      <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 20% 30%, #fff 0, transparent 40%), radial-gradient(circle at 80% 70%, #fff 0, transparent 35%)"></div>
+      <div class="relative max-w-5xl mx-auto px-5 sm:px-8 py-8 sm:py-10">
+        <h2 class="text-3xl sm:text-4xl font-extrabold leading-tight tracking-tight">预约桌位，轻松开局</h2>
+        <p class="mt-2 max-w-xl text-sm sm:text-base text-white/85">选择人数和时间，系统自动匹配桌位。${games.length} 款桌游等你来玩。</p>
+        <div class="mt-4 flex flex-wrap gap-2 text-xs sm:text-sm font-semibold">
+          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">⚡ 即时匹配空桌</span>
+          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">🎯 ${games.length} 款精选桌游</span>
+          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">💬 AI 客服推荐</span>
         </div>
-        ${!state.customerResult ? `
-          <button class="btn btn-secondary btn-full" data-customer-match type="button">🔍 查找可用桌位</button>
-          ${state.customerMatches.length > 0 ? `
-            <div style="margin-top:14px">
-              <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">${state.customerMatches.length} 个可用桌位</div>
-              <div class="match-list">${renderTableMatchList(state.customerMatches, 'customer')}</div>
-            </div>
-            ${selectedTable ? `<div class="selected-table-preview"><div class="table-icon">🪑</div><div class="table-info"><strong>${escapeHtml(selectedTable.code)} · ${selectedTable.seatCapacity}人桌</strong><span>${escapeHtml(selectedTable.areaType||'standard')}</span></div></div>` : ''}
-            <button class="btn btn-primary btn-full" data-customer-submit type="button" style="margin-top:12px">${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}</button>
-          ` : ''}
-        ` : ''}
       </div>
-      <div class="game-catalog-section">
-        <h3>店内桌游 · ${games.length} 款</h3>
-        <div class="game-card-grid">
-          ${games.slice(0, 12).map(g => {
+    </section>
+
+    <div class="max-w-6xl mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-8 items-start">
+      <!-- 预约卡 -->
+      <div class="card bg-base-100 shadow-xl rounded-3xl border border-base-300/50 lg:sticky lg:top-20">
+        <div class="card-body p-6 gap-3">
+          <h3 class="text-xl font-bold tracking-tight">${state.customerResult ? '预约成功 🎉' : '填写预约信息'}</h3>
+          ${state.customerResult
+            ? `<div class="alert alert-success rounded-2xl">
+                <div>
+                  <div class="font-bold">预约已提交 #${state.customerResult.reservationId}</div>
+                  <div class="text-sm opacity-90">${escapeHtml(state.customerResult.tableCode || '')} ${state.customerResult.seatCapacity || ''}人桌，请按时到店 😊</div>
+                </div>
+              </div>`
+            : ''}
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">姓名</span>
+            <input class="input input-bordered w-full rounded-xl" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" placeholder="您的称呼" />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">电话</span>
+            <input class="input input-bordered w-full rounded-xl" type="tel" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" placeholder="方便联系" />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">人数</span>
+            <input class="input input-bordered w-full rounded-xl" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" />
+          </label>
+          <div class="grid grid-cols-1 gap-3">
+            <label class="form-control min-w-0">
+              <span class="label-text text-sm font-semibold mb-1">到店时间</span>
+              <input class="input input-bordered w-full rounded-xl" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" />
+            </label>
+            <label class="form-control min-w-0">
+              <span class="label-text text-sm font-semibold mb-1">离店时间</span>
+              <input class="input input-bordered w-full rounded-xl" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" />
+            </label>
+          </div>
+          ${!state.customerResult ? `
+            <button class="btn btn-outline btn-primary w-full rounded-xl mt-1" data-customer-match type="button">🔍 查找可用桌位</button>
+            ${state.customerMatches.length > 0 ? `
+              <div class="mt-2">
+                <div class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-2">${state.customerMatches.length} 个可用桌位</div>
+                <div class="grid grid-cols-2 gap-2">
+                  ${state.customerMatches.map((t) => {
+                    const active = Number(t.tableId) === Number(state.customerSelectedTableId);
+                    return `<button data-customer-table="${t.tableId}" type="button" class="rounded-2xl border-2 p-3 text-left transition ${active ? 'border-primary bg-primary/10' : 'border-base-300 hover:border-primary/50'}">
+                      <div class="font-bold">${escapeHtml(t.code)}</div>
+                      <div class="text-xs text-base-content/60">${t.seatCapacity}人桌 · ${escapeHtml(t.areaType || 'standard')}</div>
+                    </button>`;
+                  }).join('')}
+                </div>
+                <button class="btn btn-primary w-full rounded-xl mt-3 border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-lg hover:opacity-90" data-customer-submit type="button">
+                  ${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}
+                </button>
+              </div>
+            ` : ''}
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- 桌游画廊 -->
+      <div>
+        <div class="flex items-baseline justify-between mb-4">
+          <h3 class="text-2xl font-bold tracking-tight">店内桌游</h3>
+          <span class="text-sm text-base-content/50">${games.length} 款</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+          ${games.slice(0, 12).map((g) => {
             const dif = diffLabels[g.difficulty_level || g.difficulty] || '中等';
             return `
-            <div class="game-card">
-              <img class="game-card-img" src="${escapeAttr(g.cover_image_url || g.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80')}" alt="${escapeAttr(g.title)}" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80'" />
-              <div class="game-card-body">
-                <h3>${escapeHtml(g.title)}</h3>
-                <p class="meta">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人 · ${g.avg_minutes || g.avgMinutes || 90}分钟 · ${dif}</p>
-                ${g.description ? `<p class="desc">${escapeHtml(g.description)}</p>` : ''}
-              </div>
-            </div>`;
+              <div class="card bg-base-100 shadow-md rounded-3xl overflow-hidden border border-base-300/40 transition-all hover:-translate-y-1 hover:shadow-xl">
+                <figure class="aspect-[4/3] overflow-hidden bg-base-300">
+                  <img class="w-full h-full object-cover" src="${escapeAttr(g.cover_image_url || g.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80')}" alt="${escapeAttr(g.title)}" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80'" />
+                </figure>
+                <div class="card-body p-4 gap-2">
+                  <h4 class="font-bold text-base leading-tight">${escapeHtml(g.title)}</h4>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span class="badge badge-sm badge-primary badge-outline rounded-full">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
+                    <span class="badge badge-sm badge-secondary badge-outline rounded-full">${g.avg_minutes || g.avgMinutes || 90}分钟</span>
+                    <span class="badge badge-sm badge-ghost rounded-full">${dif}</span>
+                  </div>
+                  ${g.description ? `<p class="text-sm text-base-content/60 line-clamp-2">${escapeHtml(g.description)}</p>` : ''}
+                </div>
+              </div>`;
           }).join('')}
         </div>
       </div>
@@ -1615,10 +1675,12 @@ function renderCustomerBookingPage() {
 
 function renderPublicCustomerShell() {
   return `
-    <div class="public-shell">
-      <header class="public-topbar">
-        <h1>🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</h1>
-        ${state.currentUser ? `<a class="back-link" href="#/dashboard">进入后台 →</a>` : ''}
+    <div data-theme="bgcafe" class="min-h-screen bg-base-200 text-base-content">
+      <header class="sticky top-0 z-40 flex items-center justify-between gap-4 px-5 sm:px-8 py-3 bg-base-100/80 backdrop-blur-xl border-b border-base-300/60">
+        <h1 class="m-0 text-lg font-extrabold tracking-tight">
+          <span class="bg-gradient-to-r from-orange-500 to-purple-600 bg-clip-text text-transparent">🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</span>
+        </h1>
+        ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
       </header>
       ${renderCustomerBookingPage()}
     </div>

@@ -7,6 +7,33 @@
 @plugin "daisyui" {
   themes: light --default;
 }
+/* 橙紫品牌主题：新 Tailwind 页面（顾客页/后台重构页）用 data-theme="bgcafe" 启用。
+   旧页面不带该属性，继续用自身 --primary #0071e3，互不干扰。 */
+@plugin "daisyui/theme" {
+  name: "bgcafe";
+  default: false;
+  color-scheme: light;
+  --color-base-100: #ffffff;
+  --color-base-200: #f7f5fb;
+  --color-base-300: #ece8f5;
+  --color-base-content: #1f1a2e;
+  --color-primary: #f97316;
+  --color-primary-content: #ffffff;
+  --color-secondary: #a855f7;
+  --color-secondary-content: #ffffff;
+  --color-accent: #ec4899;
+  --color-accent-content: #ffffff;
+  --color-neutral: #2a2235;
+  --color-neutral-content: #ffffff;
+  --color-info: #0ea5e9;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --radius-selector: 1rem;
+  --radius-field: 0.75rem;
+  --radius-box: 1.25rem;
+}
+
 
 :root {
   color-scheme: light dark;
