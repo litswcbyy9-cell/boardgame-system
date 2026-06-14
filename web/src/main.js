@@ -1462,14 +1462,25 @@ function renderAuthScreen() {
     <div id="toast-host" class="toast-host"></div>`;
 }
 
+const navEmoji = {
+  dashboard: '📊', tables: '🪑', members: '👥', staff: '🧑‍💼', recommend: '✨',
+  sessions: '🎮', reports: '📈', games: '🎲', coupons: '🎟️', billing: '💳',
+  rental: '📦', 'staff-mgmt': '🔐', ai: '🤖',
+};
+
 function renderNav() {
   return navItems
-    .map(
-      (item) => `
-        <a href="#/${item.id}" class="${state.activePage === item.id ? 'is-active' : ''}" data-page="${item.id}" ${state.activePage === item.id ? 'aria-current="page"' : ''}>
-          <i class="nav-mark nav-mark--${item.icon}"></i><span>${escapeHtml(item.label)}</span>
-        </a>`
-    )
+    .map((item) => {
+      const active = state.activePage === item.id;
+      return `
+        <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
+          class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${active
+            ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
+            : 'text-white/65 hover:text-white hover:bg-white/10'}">
+          <span class="text-base leading-none">${navEmoji[item.id] || '•'}</span>
+          <span>${escapeHtml(item.label)}</span>
+        </a>`;
+    })
     .join('');
 }
 
@@ -2238,33 +2249,33 @@ async function render() {
   const pageContent = await renderPageContent(summary);
   const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental' || page.id === 'ai';
   $('#app').innerHTML = `
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="#/dashboard" data-page="dashboard">
-          <div class="brand-icon">🎲</div>
+    <div data-theme="bgcafe" class="grid grid-cols-1 lg:grid-cols-[230px_1fr] min-h-screen bg-base-200">
+      <aside class="hidden lg:flex flex-col gap-1 sticky top-0 h-screen p-3 bg-neutral text-neutral-content">
+        <a class="flex items-center justify-center py-4" href="#/dashboard" data-page="dashboard">
+          <span class="grid place-items-center w-11 h-11 rounded-2xl bg-gradient-to-br from-orange-500 to-purple-600 text-2xl shadow-lg">🎲</span>
         </a>
-        <nav class="nav-list" aria-label="主导航">
+        <nav class="grid gap-1 overflow-y-auto" aria-label="主导航">
           ${renderNav()}
         </nav>
-        <div class="sidebar-footer">
-          <span class="${healthClass()}" style="font-size:11px;display:block;text-align:center;padding:8px"><i></i>${escapeHtml(state.health)}</span>
+        <div class="mt-auto pt-2">
+          <span class="block text-center text-[11px] text-white/50 py-2">● ${escapeHtml(state.health)}</span>
         </div>
       </aside>
-      <main class="main" id="page-${escapeAttr(page.id)}">
-        <header class="topbar">
-          <div class="topbar-left">
-            ${hasOwnHeader ? '' : `<div class="topbar-title"><span class="eyebrow">${escapeHtml(page.eyebrow)}</span><h1>${escapeHtml(page.title)}</h1></div>`}
+      <main class="min-w-0 flex flex-col" id="page-${escapeAttr(page.id)}">
+        <header class="sticky top-0 z-30 flex items-center justify-between gap-4 px-5 sm:px-7 py-3 min-h-[56px] bg-base-100/85 backdrop-blur-xl border-b border-base-300/60">
+          <div class="flex items-center gap-3 min-w-0">
+            ${hasOwnHeader ? '' : `<div class="min-w-0"><div class="text-[11px] font-bold uppercase tracking-wider text-base-content/45">${escapeHtml(page.eyebrow)}</div><h1 class="m-0 text-lg font-bold tracking-tight truncate">${escapeHtml(page.title)}</h1></div>`}
           </div>
-          <div class="topbar-right">
-            ${state.reservations.filter(r => r.status === 'pending').length > 0 ? `<span class="topbar-stat">${state.reservations.filter(r => r.status === 'pending').length} 待处理</span>` : ''}
-            ${state.openSessions.length > 0 ? `<span class="topbar-stat">${state.openSessions.length} 进行中</span>` : ''}
-            <span class="user-pill">${escapeHtml(state.currentUser.displayName || state.currentUser.username)}</span>
-            <button class="icon-btn" data-refresh title="刷新" style="font-size:14px">↻</button>
-            <button class="btn btn-ghost btn-sm" data-logout>退出</button>
+          <div class="flex items-center gap-2">
+            ${state.reservations.filter(r => r.status === 'pending').length > 0 ? `<span class="badge badge-warning badge-sm rounded-full font-semibold">${state.reservations.filter(r => r.status === 'pending').length} 待处理</span>` : ''}
+            ${state.openSessions.length > 0 ? `<span class="badge badge-info badge-sm rounded-full font-semibold">${state.openSessions.length} 进行中</span>` : ''}
+            <span class="text-sm text-base-content/70 max-w-[120px] truncate">${escapeHtml(state.currentUser.displayName || state.currentUser.username)}</span>
+            <button class="btn btn-ghost btn-sm btn-circle" data-refresh title="刷新">↻</button>
+            <button class="btn btn-ghost btn-sm rounded-full" data-logout>退出</button>
           </div>
         </header>
-        ${state.err ? `<div class="notice">${escapeHtml(state.err)}</div>` : ''}
-        ${pageContent}
+        ${state.err ? `<div class="notice mx-5 sm:mx-7 mt-4">${escapeHtml(state.err)}</div>` : ''}
+        <div class="px-5 sm:px-7 pb-10">${pageContent}</div>
       </main>
     </div>`;
   bind();
