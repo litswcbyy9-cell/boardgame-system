@@ -3,26 +3,34 @@
 // 无 API Key 时返回 mock，保证无 Key 也能跑通流程
 // =====================================================================
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+// 惰性读取 env：ES 模块 import 早于 dotenv.config()，故不能在模块顶层求值，
+// 否则读到的是空值。改为每次调用时读 process.env（此时 dotenv 已加载）。
+function cfg() {
+  return {
+    key: process.env.OPENAI_API_KEY || '',
+    baseUrl: (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  };
+}
 
 export function llmConfigured() {
-  return Boolean(OPENAI_API_KEY);
+  return Boolean(cfg().key);
 }
 
 export function llmInfo() {
-  return { configured: llmConfigured(), model: OPENAI_MODEL, baseUrl: OPENAI_BASE_URL };
+  const { key, model, baseUrl } = cfg();
+  return { configured: Boolean(key), model, baseUrl };
 }
 
 // messages: [{role, content}]。opts.json=true 时要求返回 JSON。
 // 返回 { content, mock } —— mock=true 表示未配置 Key 的占位回答。
 export async function callLLM(messages, opts = {}) {
-  if (!OPENAI_API_KEY) {
+  const { key, baseUrl, model } = cfg();
+  if (!key) {
     return { content: mockReply(messages, opts), mock: true };
   }
   const body = {
-    model: opts.model || OPENAI_MODEL,
+    model: opts.model || model,
     messages,
     temperature: opts.temperature ?? 0.7,
   };
@@ -32,11 +40,11 @@ export async function callLLM(messages, opts = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 30000);
   try {
-    const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    const resp = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -46,7 +54,10 @@ export async function callLLM(messages, opts = {}) {
       throw new Error(`LLM API ${resp.status}: ${text.slice(0, 200)}`);
     }
     const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content ?? '';
+    const msg = data?.choices?.[0]?.message ?? {};
+    // 推理模型（如 deepseek-v4-flash）正式答案在 content，思考在 reasoning_content；
+    // content 为空时回退到 reasoning_content。
+    const content = (msg.content && msg.content.trim()) ? msg.content : (msg.reasoning_content || '');
     return { content, mock: false };
   } finally {
     clearTimeout(timeout);

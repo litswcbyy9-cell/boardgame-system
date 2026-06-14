@@ -1892,7 +1892,7 @@ app.post('/api/ai/game-description', requireAuth, async (req, res) => {
     const { content, mock } = await callLLM([
       { role: 'system', content: '你是桌游馆的资深店员，为桌游写简洁吸引人的中文介绍。控制在 80-120 字，包含玩法亮点和适合人群，不要分点，不要 markdown。' },
       { role: 'user', content: `请为这款桌游写一段介绍：《${title}》${meta ? '（' + meta + '）' : ''}` },
-    ], { temperature: 0.8, maxTokens: 400 });
+    ], { temperature: 0.8, maxTokens: 2000 });
     res.json({ description: content.trim(), mock });
   } catch (e) {
     console.error('[ERROR] ai game-description:', e);
@@ -1926,7 +1926,7 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
     const { content, mock } = await callLLM([
       { role: 'system', content: '你是桌游馆运营助手。根据提供的 JSON 经营数据用简洁中文回答店员的问题。只依据数据回答，数据没有的就说暂无该数据。不要编造数字。' },
       { role: 'user', content: `经营数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
-    ], { temperature: 0.3, maxTokens: 600 });
+    ], { temperature: 0.3, maxTokens: 2500 });
     res.json({ answer: content.trim(), data: context, mock });
   } catch (e) {
     console.error('[ERROR] ai ask:', e);
@@ -1947,7 +1947,7 @@ app.post('/api/public/ai/chat', async (req, res) => {
     const { content, mock } = await callLLM([
       { role: 'system', content: `你是桌游馆的友好客服。只回答桌游推荐、预约、营业相关问题，其他话题礼貌婉拒。店内桌游目录：${catalog}。根据顾客需求推荐合适桌游，简洁热情，控制在 120 字内。` },
       { role: 'user', content: message },
-    ], { temperature: 0.7, maxTokens: 400 });
+    ], { temperature: 0.7, maxTokens: 2000 });
     res.json({ reply: content.trim(), mock });
   } catch (e) {
     console.error('[ERROR] ai chat:', e);
