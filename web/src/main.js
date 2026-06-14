@@ -3255,11 +3255,22 @@ async function onCustChatSend() {
   }
 }
 
+async function loadPublicData() {
+  try {
+    const [games, venue] = await Promise.all([api('/api/games'), api('/api/venue')]);
+    if (Array.isArray(games)) state.games = games;
+    if (venue) state.venue = venue;
+  } catch {
+    // 公开数据加载失败时静默，页面仍可渲染
+  }
+}
+
 async function init() {
   if (!window.location.hash) {
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/dashboard`);
   }
   if (!state.authToken) {
+    if (state.activePage === 'customer') await loadPublicData();
     render();
     return;
   }
@@ -3281,6 +3292,9 @@ window.addEventListener('hashchange', () => {
   const nextPage = pageFromHash();
   if (state.activePage === nextPage) return;
   state.activePage = nextPage;
+  if (nextPage === 'customer' && !state.currentUser && !state.games.length) {
+    void loadPublicData().then(render);
+  }
   render();
   window.scrollTo({ top: 0, behavior: 'auto' });
 });
