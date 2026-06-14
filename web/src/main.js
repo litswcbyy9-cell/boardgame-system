@@ -783,15 +783,15 @@ function renderMetricCards(summary) {
 function renderFloor() {
   const dims = gridDims();
   return `
-    <div class="floor-toolbar">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <div>
-        <h2>桌位平面图</h2>
-        <p>${state.venue?.address ? escapeHtml(state.venue.address) : '根据实时状态安排预约、入场和结算'}</p>
+        <h2 class="text-xl font-bold tracking-tight m-0">桌位平面图</h2>
+        <p class="text-sm text-base-content/55 mt-0.5">${state.venue?.address ? escapeHtml(state.venue.address) : '根据实时状态安排预约、入场和结算'}</p>
       </div>
-      <div class="legend" aria-label="桌位状态图例">
-        <span><i class="swatch swatch--idle"></i>空闲</span>
-        <span><i class="swatch swatch--reserved"></i>预约</span>
-        <span><i class="swatch swatch--occupied"></i>占用</span>
+      <div class="flex items-center gap-3 text-xs font-semibold rounded-full bg-base-200 px-3 py-1.5" aria-label="桌位状态图例">
+        <span class="inline-flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-full bg-emerald-500"></i>空闲</span>
+        <span class="inline-flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-full bg-amber-500"></i>预约</span>
+        <span class="inline-flex items-center gap-1.5"><i class="w-2.5 h-2.5 rounded-full bg-rose-500"></i>占用</span>
       </div>
     </div>
     <div class="floor" style="grid-template-columns: repeat(${dims.cols}, minmax(112px, 1fr));">
@@ -1558,22 +1558,36 @@ function renderReportsPage() {
     })
     .join('');
 
-  return `
-    <section class="report-kpis">
-      <div class="report-kpi"><span>今日收入</span><strong>¥${moneyFromRevenue()}</strong><small>已结算 ${settled} 单</small></div>
-      <div class="report-kpi"><span>计费时长</span><strong>${Number(minutes || 0)}</strong><small>分钟</small></div>
-      <div class="report-kpi"><span>活跃桌位</span><strong>${state.tableUtilization.filter((row) => Number(row.settled_sessions_in_range ?? row.settledSessionsInRange ?? 0) > 0).length}</strong><small>近 30 天有结算记录</small></div>
-    </section>
-    <section class="report-grid">
-      <div class="panel report-panel">
-        <div class="section-head"><h2>桌游热度排行</h2><span>近 30 天战绩记录</span></div>
-        <div class="report-list">${popularityRows || '<div class="empty-state compact">暂无热度数据。</div>'}</div>
-      </div>
-      <div class="panel report-panel">
-        <div class="section-head"><h2>桌位利用率</h2><span>近 30 天已结算对局</span></div>
-        <div class="report-list">${tableRows || '<div class="empty-state compact">暂无桌位利用率数据。</div>'}</div>
-      </div>
+  const kpi = (label, value, hint, grad, icon) => `
+    <section class="relative overflow-hidden rounded-2xl bg-gradient-to-br ${grad} p-5 text-white shadow-lg transition-transform hover:-translate-y-1">
+      <span class="absolute -right-2 -top-2 text-6xl opacity-20">${icon}</span>
+      <span class="block text-sm font-medium opacity-90">${label}</span>
+      <strong class="my-1 block text-4xl font-extrabold leading-none tracking-tight">${value}</strong>
+      <span class="block text-xs opacity-80">${hint}</span>
     </section>`;
+  const activeTables = state.tableUtilization.filter((row) => Number(row.settled_sessions_in_range ?? row.settledSessionsInRange ?? 0) > 0).length;
+  const panel = (title, sub, body) => `
+    <div class="card bg-base-100 shadow-md rounded-2xl border border-base-200">
+      <div class="card-body p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-base font-bold m-0">${title}</h2>
+          <span class="text-xs text-base-content/50">${sub}</span>
+        </div>
+        ${body}
+      </div>
+    </div>`;
+  return `
+    <div class="space-y-5 pt-2">
+      <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        ${kpi('今日收入', `¥${moneyFromRevenue()}`, `已结算 ${settled} 单`, 'from-orange-400 to-pink-500', '💰')}
+        ${kpi('计费时长', `${Number(minutes || 0)}`, '分钟', 'from-violet-400 to-purple-600', '⏱️')}
+        ${kpi('活跃桌位', `${activeTables}`, '近 30 天有结算记录', 'from-sky-400 to-indigo-500', '🪑')}
+      </section>
+      <section class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        ${panel('桌游热度排行', '近 30 天战绩记录', `<div class="report-list">${popularityRows || '<div class="empty-state compact">暂无热度数据。</div>'}</div>`)}
+        ${panel('桌位利用率', '近 30 天已结算对局', `<div class="report-list">${tableRows || '<div class="empty-state compact">暂无桌位利用率数据。</div>'}</div>`)}
+      </section>
+    </div>`;
 }
 
 function renderCustomerBookingPage() {
