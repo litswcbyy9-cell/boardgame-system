@@ -1419,43 +1419,46 @@ function renderGameCatalog() {
 
 function renderAuthScreen() {
   const isRegister = ALLOW_PUBLIC_REGISTER && state.authMode === 'register';
+  const tabBtn = (active, mode, label) =>
+    `<button class="flex-1 min-h-9 rounded-lg font-bold text-sm transition ${active ? 'bg-white text-primary shadow' : 'text-white/70 hover:text-white'}" data-auth-mode="${mode}" type="button">${label}</button>`;
+  const field = (label, attrs) =>
+    `<label class="form-control w-full"><span class="label-text text-sm font-semibold mb-1">${label}</span><input class="input input-bordered w-full rounded-xl" ${attrs} /></label>`;
   return `
-    <div class="auth-shell">
-      <section class="auth-visual">
-        <div>
-          <span class="eyebrow">Dice Cat Ops</span>
-          <h1>桌游门店运营工作台</h1>
-          <p>预约、桌位、会员、结算和战绩在同一个后台完成。</p>
+    <div data-theme="bgcafe" class="min-h-screen grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr]">
+      <section class="relative overflow-hidden hidden lg:flex items-end p-12 bg-gradient-to-br from-orange-500 via-pink-500 to-purple-700 text-white">
+        <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 25% 25%, #fff 0, transparent 40%), radial-gradient(circle at 75% 60%, #fff 0, transparent 35%)"></div>
+        <div class="relative">
+          <span class="inline-block rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur">🎲 Dice Cat Ops</span>
+          <h1 class="mt-4 text-5xl font-extrabold leading-tight tracking-tight">桌游门店<br/>运营工作台</h1>
+          <p class="mt-4 max-w-md text-lg text-white/85">预约、桌位、会员、结算、战绩、AI 助手，全部在同一个后台完成。</p>
         </div>
       </section>
-      <section class="auth-panel" aria-label="${isRegister ? '注册账号' : '登录账号'}">
-        <div class="auth-card">
-          <div class="auth-head">
-            <span class="eyebrow">${isRegister ? 'Create Account' : 'Staff Login'}</span>
-            <h2>${isRegister ? '注册员工账号' : '登录后台'}</h2>
-          </div>
-          ${
-            ALLOW_PUBLIC_REGISTER
-              ? `<div class="auth-tabs">
-                   <button class="${!isRegister ? 'is-active' : ''}" data-auth-mode="login" type="button">登录</button>
-                   <button class="${isRegister ? 'is-active' : ''}" data-auth-mode="register" type="button">注册</button>
+      <section class="flex items-center justify-center p-6 bg-base-200" aria-label="${isRegister ? '注册账号' : '登录账号'}">
+        <div class="card w-full max-w-md bg-base-100 shadow-xl rounded-3xl border border-base-300/50">
+          <div class="card-body p-8 gap-4">
+            <div>
+              <span class="text-xs font-bold uppercase tracking-wider text-primary">${isRegister ? 'Create Account' : 'Staff Login'}</span>
+              <h2 class="text-2xl font-bold tracking-tight mt-1">${isRegister ? '注册员工账号' : '登录后台'}</h2>
+            </div>
+            ${ALLOW_PUBLIC_REGISTER
+              ? `<div class="flex gap-1 p-1 rounded-xl bg-gradient-to-r from-orange-500 to-purple-600">
+                   ${tabBtn(!isRegister, 'login', '登录')}
+                   ${tabBtn(isRegister, 'register', '注册')}
                  </div>`
-              : ''
-          }
-          ${
-            isRegister
-              ? `<form class="auth-form">
-                  <label class="field"><span>账号</span><input class="input" data-field="registerUsername" autocomplete="username" value="${escapeAttr(state.registerUsername)}" /></label>
-                  <label class="field"><span>显示名称</span><input class="input" data-field="registerDisplayName" autocomplete="name" value="${escapeAttr(state.registerDisplayName)}" /></label>
-                  <label class="field"><span>密码</span><input class="input" type="password" data-field="registerPassword" autocomplete="new-password" /></label>
-                  <button class="btn btn-primary full" data-register type="button">注册并进入</button>
+              : ''}
+            ${isRegister
+              ? `<form class="grid gap-3">
+                  ${field('账号', `data-field="registerUsername" autocomplete="username" value="${escapeAttr(state.registerUsername)}"`)}
+                  ${field('显示名称', `data-field="registerDisplayName" autocomplete="name" value="${escapeAttr(state.registerDisplayName)}"`)}
+                  ${field('密码', `type="password" data-field="registerPassword" autocomplete="new-password"`)}
+                  <button class="btn btn-primary w-full rounded-xl border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-lg hover:opacity-90 mt-1" data-register type="button">注册并进入</button>
                 </form>`
-              : `<form class="auth-form">
-                  <label class="field"><span>账号</span><input class="input" data-field="loginUsername" autocomplete="username" value="${escapeAttr(state.loginUsername)}" /></label>
-                  <label class="field"><span>密码</span><input class="input" type="password" data-field="loginPassword" autocomplete="current-password" /></label>
-                  <button class="btn btn-primary full" data-login type="button">登录</button>
-                </form>`
-          }
+              : `<form class="grid gap-3">
+                  ${field('账号', `data-field="loginUsername" autocomplete="username" value="${escapeAttr(state.loginUsername)}"`)}
+                  ${field('密码', `type="password" data-field="loginPassword" autocomplete="current-password"`)}
+                  <button class="btn btn-primary w-full rounded-xl border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-lg hover:opacity-90 mt-1" data-login type="button">登录</button>
+                </form>`}
+          </div>
         </div>
       </section>
     </div>
@@ -1528,16 +1531,25 @@ function renderRecommendPage() {
 }
 
 function renderSessionsPage() {
+  const card = (title, badge, body) => `
+    <div class="card bg-base-100 shadow-md border border-base-200 rounded-2xl">
+      <div class="card-body p-5">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="card-title text-base font-bold">${title}</h2>
+          <span class="badge badge-ghost badge-sm">${badge}</span>
+        </div>
+        ${body}
+      </div>
+    </div>`;
   return `
-    <section class="lower-grid sessions-grid">
-      <div class="panel compact-panel"><div class="section-head"><h2>待处理预约</h2><span>${state.reservations.length} 条</span></div>${renderReservations()}</div>
-      <div class="panel compact-panel"><div class="section-head"><h2>进行中对局</h2><span>${state.openSessions.length} 局</span></div>${renderSessions()}</div>
-      <div class="panel compact-panel"><div class="section-head"><h2>会员排行</h2><span>胜率</span></div>${renderLeaderboard()}</div>
-    </section>
-    <section class="panel catalog">
-      <div class="section-head"><h2>桌游目录热度</h2><span>用于录入战绩时选择游戏</span></div>
-      <div class="game-grid">${renderGameCatalog()}</div>
-    </section>`;
+    <div class="space-y-5 pt-2">
+      <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        ${card('待处理预约', `${state.reservations.length} 条`, renderReservations())}
+        ${card('进行中对局', `${state.openSessions.length} 局`, renderSessions())}
+        ${card('会员排行', '胜率', renderLeaderboard())}
+      </section>
+      ${card('桌游目录热度', '用于录入战绩时选择游戏', `<div class="game-grid mt-1">${renderGameCatalog()}</div>`)}
+    </div>`;
 }
 
 function renderReportsPage() {
