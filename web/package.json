@@ -8,6 +8,9 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "daisyui": "^5.5.23",
+    "tailwindcss": "^4.3.1",
     "vite": "^6.1.0"
   }
 }

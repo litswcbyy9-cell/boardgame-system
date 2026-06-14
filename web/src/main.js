@@ -1640,7 +1640,7 @@ function renderCustomerChatWidget() {
           <div class="cust-chat-head"><strong>AI 客服</strong><button class="cust-chat-close" id="btn-cust-chat-close" type="button">×</button></div>
           <div class="cust-chat-log" id="cust-chat-log">
             ${bubbles}
-            ${state.custChatLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing">输入中…</div></div>' : ''}
+            ${state.custChatLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing"><span class="loading loading-dots loading-sm"></span> 输入中</div></div>' : ''}
           </div>
           <div class="cust-chat-input">
             <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问问想玩什么…" value="${escapeAttr(state.custChatInput || '')}" />
@@ -2120,7 +2120,7 @@ function renderAiAssistantPage() {
     <div class="ai-chat-panel apple-card" style="padding:0;overflow:hidden">
       <div class="ai-chat-log" id="ai-chat-log">
         ${bubbles}
-        ${state.aiLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing">思考中…</div></div>' : ''}
+        ${state.aiLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing"><span class="loading loading-dots loading-sm"></span> 思考中</div></div>' : ''}
       </div>
       <div class="ai-chat-input">
         <input class="input" data-field="aiInput" id="ai-input" placeholder="输入问题，回车发送…" value="${escapeAttr(state.aiInput)}" />

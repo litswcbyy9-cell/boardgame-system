@@ -1,3 +1,13 @@
+/* Tailwind v4 + DaisyUI — 渐进引入：跳过 preflight 全局重置，避免破坏现有 2200 行设计系统。
+   仅启用 theme/utilities/components，新页面按需使用。现有自定义 class 仍在本文件后方定义，
+   同名时因后置而胜出（如 .btn/.badge/.card）。 */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@plugin "daisyui" {
+  themes: light --default;
+}
+
 :root {
   color-scheme: light dark;
   --bg: #f5f5f7;
