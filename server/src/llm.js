@@ -37,31 +37,46 @@ export async function callLLM(messages, opts = {}) {
   if (opts.json) body.response_format = { type: 'json_object' };
   if (opts.maxTokens) body.max_tokens = opts.maxTokens;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 30000);
-  try {
-    const resp = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      throw new Error(`LLM API ${resp.status}: ${text.slice(0, 200)}`);
+  const urls = [`${baseUrl}/chat/completions`];
+  if (!baseUrl.endsWith('/v1')) urls.push(`${baseUrl}/v1/chat/completions`);
+
+  let lastError;
+  for (const url of urls) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 30000);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        const error = new Error(`LLM API ${resp.status} ${url}: ${text.slice(0, 200)}`);
+        lastError = error;
+        if ((resp.status === 404 || resp.status === 405) && url !== urls[urls.length - 1]) {
+          continue;
+        }
+        throw error;
+      }
+      const data = await resp.json();
+      const msg = data?.choices?.[0]?.message ?? {};
+      // 推理模型（如 deepseek-v4-flash）正式答案在 content，思考在 reasoning_content；
+      // content 为空时回退到 reasoning_content。
+      const content = (msg.content && msg.content.trim()) ? msg.content : (msg.reasoning_content || '');
+      return { content, mock: false };
+    } catch (error) {
+      lastError = error;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    const data = await resp.json();
-    const msg = data?.choices?.[0]?.message ?? {};
-    // 推理模型（如 deepseek-v4-flash）正式答案在 content，思考在 reasoning_content；
-    // content 为空时回退到 reasoning_content。
-    const content = (msg.content && msg.content.trim()) ? msg.content : (msg.reasoning_content || '');
-    return { content, mock: false };
-  } finally {
-    clearTimeout(timeout);
   }
+  throw lastError;
 }
 
 // 无 Key 时的占位回答，按用途给出有意义的提示
