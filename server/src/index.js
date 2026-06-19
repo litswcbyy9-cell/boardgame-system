@@ -807,14 +807,30 @@ app.get('/api/tables', async (_req, res) => {
 });
 
 app.get('/api/games', async (_req, res) => {
-  const [rows] = await pool.query(
-    `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
-            min_players AS minPlayers, max_players AS maxPlayers, category,
-            difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
-            recommend_weight AS recommendWeight
-     FROM games ORDER BY id`
-  );
-  res.json(rows);
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
+              min_players AS minPlayers, max_players AS maxPlayers, category,
+              difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
+              recommend_weight AS recommendWeight, description, publisher,
+              publish_year AS publishYear, bgg_id AS bggId
+       FROM games ORDER BY recommend_weight DESC, id`
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.code !== 'ER_BAD_FIELD_ERROR') {
+      console.error('[ERROR] games:', error);
+      return sendError(res, 500, 'database_error', error.message);
+    }
+    const [rows] = await pool.query(
+      `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
+              min_players AS minPlayers, max_players AS maxPlayers, category,
+              difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
+              recommend_weight AS recommendWeight
+       FROM games ORDER BY recommend_weight DESC, id`
+    );
+    res.json(rows);
+  }
 });
 
 app.get('/api/players', async (_req, res) => {
@@ -1707,6 +1723,36 @@ app.delete('/api/games-mgmt/:id', requireTenantAdmin, async (req, res) => {
 // =====================================================================
 
 // 库存统计：可借/借出中/逾期/维护
+app.get('/api/public/rental/games', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+        g.id AS gameId,
+        g.title,
+        g.cover_image_url AS coverImageUrl,
+        g.category,
+        g.min_players AS minPlayers,
+        g.max_players AS maxPlayers,
+        g.avg_minutes AS avgMinutes,
+        COUNT(c.id) AS availableCopies,
+        MIN(c.deposit_cents) AS depositCents,
+        GROUP_CONCAT(DISTINCT NULLIF(c.location, '') ORDER BY c.location SEPARATOR '、') AS locations
+       FROM game_copies c
+       INNER JOIN games g ON g.id = c.game_id
+       WHERE c.status = 'available'
+       GROUP BY g.id, g.title, g.cover_image_url, g.category, g.min_players, g.max_players, g.avg_minutes
+       ORDER BY availableCopies DESC, g.title ASC
+       LIMIT 24`
+    );
+    res.json({ data: rows });
+  } catch (e) {
+    if (e.code && e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+      console.error('[ERROR] public rental:', e);
+    }
+    res.json({ data: [] });
+  }
+});
+
 app.get('/api/rental/stats', requireAuth, async (_req, res) => {
   try {
     const [[copyStats]] = await pool.query(
