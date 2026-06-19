@@ -809,12 +809,27 @@ app.get('/api/tables', async (_req, res) => {
 app.get('/api/games', async (_req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
-              min_players AS minPlayers, max_players AS maxPlayers, category,
-              difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
-              recommend_weight AS recommendWeight, description, publisher,
-              publish_year AS publishYear, bgg_id AS bggId
-       FROM games ORDER BY recommend_weight DESC, id`
+      `SELECT
+              g.id, g.title, g.cover_image_url AS coverImageUrl, g.rules_pdf_url AS rulesPdfUrl,
+              g.min_players AS minPlayers, g.max_players AS maxPlayers, g.category,
+              g.difficulty_level AS difficultyLevel, g.avg_minutes AS avgMinutes,
+              g.recommend_weight AS recommendWeight, g.description, g.publisher,
+              g.publish_year AS publishYear, g.bgg_id AS bggId,
+              COUNT(gr.id) AS playCount,
+              IFNULL(SUM(gr.played_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)), 0) AS recentPlayCount,
+              MAX(gr.played_at) AS lastPlayedAt,
+              ROUND(
+                IFNULL(SUM(gr.played_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)), 0) * 2
+                + COUNT(gr.id) * 0.25
+                + g.recommend_weight * 5,
+                2
+              ) AS hotScore
+       FROM games g
+       LEFT JOIN game_records gr ON gr.game_id = g.id
+       GROUP BY g.id, g.title, g.cover_image_url, g.rules_pdf_url, g.min_players, g.max_players,
+                g.category, g.difficulty_level, g.avg_minutes, g.recommend_weight,
+                g.description, g.publisher, g.publish_year, g.bgg_id
+       ORDER BY hotScore DESC, recentPlayCount DESC, g.recommend_weight DESC, g.title ASC`
     );
     res.json(rows);
   } catch (error) {
@@ -823,11 +838,25 @@ app.get('/api/games', async (_req, res) => {
       return sendError(res, 500, 'database_error', error.message);
     }
     const [rows] = await pool.query(
-      `SELECT id, title, cover_image_url AS coverImageUrl, rules_pdf_url AS rulesPdfUrl,
-              min_players AS minPlayers, max_players AS maxPlayers, category,
-              difficulty_level AS difficultyLevel, avg_minutes AS avgMinutes,
-              recommend_weight AS recommendWeight
-       FROM games ORDER BY recommend_weight DESC, id`
+      `SELECT
+              g.id, g.title, g.cover_image_url AS coverImageUrl, g.rules_pdf_url AS rulesPdfUrl,
+              g.min_players AS minPlayers, g.max_players AS maxPlayers, g.category,
+              g.difficulty_level AS difficultyLevel, g.avg_minutes AS avgMinutes,
+              g.recommend_weight AS recommendWeight,
+              COUNT(gr.id) AS playCount,
+              IFNULL(SUM(gr.played_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)), 0) AS recentPlayCount,
+              MAX(gr.played_at) AS lastPlayedAt,
+              ROUND(
+                IFNULL(SUM(gr.played_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)), 0) * 2
+                + COUNT(gr.id) * 0.25
+                + g.recommend_weight * 5,
+                2
+              ) AS hotScore
+       FROM games g
+       LEFT JOIN game_records gr ON gr.game_id = g.id
+       GROUP BY g.id, g.title, g.cover_image_url, g.rules_pdf_url, g.min_players, g.max_players,
+                g.category, g.difficulty_level, g.avg_minutes, g.recommend_weight
+       ORDER BY hotScore DESC, recentPlayCount DESC, g.recommend_weight DESC, g.title ASC`
     );
     res.json(rows);
   }
@@ -1633,13 +1662,27 @@ app.get('/api/games-mgmt/list', requireAuth, async (req, res) => {
   try {
     const tid = tenantId(req);
     const search = String(req.query.search || '').trim();
-    const baseSelect = `SELECT id, title, cover_image_url AS coverImageUrl, category,
-                        min_players AS minPlayers, max_players AS maxPlayers,
-                        difficulty_level AS difficulty, avg_minutes AS avgMinutes,
-                        description, publisher, publish_year AS publishYear, bgg_id AS bggId`;
+    const statsJoin = `
+      LEFT JOIN (
+        SELECT
+          game_id,
+          COUNT(*) AS playCount,
+          IFNULL(SUM(played_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)), 0) AS recentPlayCount,
+          MAX(played_at) AS lastPlayedAt
+        FROM game_records
+        GROUP BY game_id
+      ) gs ON gs.game_id = g.id`;
+    const baseSelect = `SELECT g.id, g.title, g.cover_image_url AS coverImageUrl, g.category,
+                        g.min_players AS minPlayers, g.max_players AS maxPlayers,
+                        g.difficulty_level AS difficulty, g.avg_minutes AS avgMinutes,
+                        g.description, g.publisher, g.publish_year AS publishYear, g.bgg_id AS bggId,
+                        IFNULL(gs.playCount, 0) AS playCount,
+                        IFNULL(gs.recentPlayCount, 0) AS recentPlayCount,
+                        gs.lastPlayedAt AS lastPlayedAt,
+                        ROUND(IFNULL(gs.recentPlayCount, 0) * 2 + IFNULL(gs.playCount, 0) * 0.25 + g.recommend_weight * 5, 2) AS hotScore`;
     if (!search) {
       const [rows] = await pool.query(
-        `${baseSelect} FROM games WHERE tenant_id = ? ORDER BY created_at DESC`,
+        `${baseSelect} FROM games g ${statsJoin} WHERE g.tenant_id = ? ORDER BY hotScore DESC, g.created_at DESC`,
         [tid]
       );
       return res.json({ data: rows });
@@ -1647,20 +1690,22 @@ app.get('/api/games-mgmt/list', requireAuth, async (req, res) => {
     // 优先全文检索（按相关度排序）
     const [ftRows] = await pool.query(
       `${baseSelect},
-        MATCH(title, category, description) AGAINST(? IN NATURAL LANGUAGE MODE) AS relevance
-       FROM games
-       WHERE tenant_id = ?
-         AND MATCH(title, category, description) AGAINST(? IN NATURAL LANGUAGE MODE)
-       ORDER BY relevance DESC`,
+        MATCH(g.title, g.category, g.description) AGAINST(? IN NATURAL LANGUAGE MODE) AS relevance
+       FROM games g
+       ${statsJoin}
+       WHERE g.tenant_id = ?
+         AND MATCH(g.title, g.category, g.description) AGAINST(? IN NATURAL LANGUAGE MODE)
+       ORDER BY relevance DESC, hotScore DESC`,
       [search, tid, search]
     );
     if (ftRows.length) return res.json({ data: ftRows });
     // 回退 LIKE（短词/ngram 未命中时的双保险）
     const like = `%${search}%`;
     const [likeRows] = await pool.query(
-      `${baseSelect} FROM games
-       WHERE tenant_id = ? AND (title LIKE ? OR description LIKE ? OR category LIKE ?)
-       ORDER BY created_at DESC`,
+      `${baseSelect} FROM games g
+       ${statsJoin}
+       WHERE g.tenant_id = ? AND (g.title LIKE ? OR g.description LIKE ? OR g.category LIKE ?)
+       ORDER BY hotScore DESC, g.created_at DESC`,
       [tid, like, like, like]
     );
     res.json({ data: likeRows });

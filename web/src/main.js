@@ -166,11 +166,7 @@ const demoData = {
     { id: 1, employeeNo: 'ST20260001', fullName: '门店管理员', phone: '13800009001', position: '店长', status: 'active', username: 'admin', role: 'admin', userStatus: 'active' },
     { id: 2, employeeNo: 'ST20260002', fullName: '值班店员', phone: '13800009002', position: '店员', status: 'active', username: null, role: null, userStatus: null },
   ],
-  games: [
-    { id: 1, title: '卡坦岛', coverImageUrl: 'https://cf.geekdo-images.com/W3Bsga_uLP9kO91gZ7H8yw__original/img/xV7oisd3RQ8R-k18cdWAYthHXsA=/0x0/filters:format(jpeg)/pic2419375.jpg', minPlayers: 3, maxPlayers: 4, category: '策略', difficultyLevel: 3, avgMinutes: 90 },
-    { id: 2, title: '璀璨宝石', coverImageUrl: 'https://cf.geekdo-images.com/vNFe4JkhKAERzi4T0Ntwpw__original/img/0E9xIYlYZCWeIYbXd8y2lyctUDo=/0x0/filters:format(jpeg)/pic1904079.jpg', minPlayers: 2, maxPlayers: 4, category: '家庭', difficultyLevel: 2, avgMinutes: 35 },
-    { id: 3, title: '阿瓦隆', coverImageUrl: 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80', minPlayers: 5, maxPlayers: 10, category: '推理', difficultyLevel: 2, avgMinutes: 45 },
-  ],
+  games: [],
   reservations: [
     { id: 101, tableId: 2, tableCode: 'A02', playerId: 1, guestName: '周末小队', playerName: '林鹿', playerPhone: '13800010001', partySize: 4, status: 'pending', reservedStart: new Date(Date.now() + 1800000).toISOString(), reservedEnd: new Date(Date.now() + 9000000).toISOString() },
     { id: 102, tableId: 5, tableCode: 'B01', playerId: 2, guestName: '四人局', playerName: '阿哲', playerPhone: '13800010002', partySize: 4, status: 'pending', reservedStart: new Date(Date.now() + 3600000).toISOString(), reservedEnd: new Date(Date.now() + 10800000).toISOString() },
@@ -187,22 +183,14 @@ const demoData = {
     { playerId: 3, displayName: 'Momo', wins: 12, games: 22, winRate: '0.545' },
   ],
   revenue: { revenue_yuan: 1380, settled_sessions: 18 },
-  popularity: [
-    { title: '璀璨宝石', record_count: 28 },
-    { title: '阿瓦隆', record_count: 21 },
-    { title: '卡坦岛', record_count: 17 },
-  ],
+  popularity: [],
   tableUtilization: [
     { code: 'A03', settled_sessions_in_range: 18 },
     { code: 'B03', settled_sessions_in_range: 15 },
     { code: 'C04', settled_sessions_in_range: 13 },
     { code: 'A01', settled_sessions_in_range: 11 },
   ],
-  gameRecommendations: [
-    { gameId: 1, title: '卡坦岛', coverImageUrl: 'https://cf.geekdo-images.com/W3Bsga_uLP9kO91gZ7H8yw__original/img/xV7oisd3RQ8R-k18cdWAYthHXsA=/0x0/filters:format(jpeg)/pic2419375.jpg', minPlayers: 3, maxPlayers: 4, category: '策略', difficultyLevel: 3, avgMinutes: 90, score: 88.5, reason: '适合 4 人，时长接近 120 分钟，近期热度较高。' },
-    { gameId: 2, title: '璀璨宝石', coverImageUrl: 'https://cf.geekdo-images.com/vNFe4JkhKAERzi4T0Ntwpw__original/img/0E9xIYlYZCWeIYbXd8y2lyctUDo=/0x0/filters:format(jpeg)/pic1904079.jpg', minPlayers: 2, maxPlayers: 4, category: '家庭', difficultyLevel: 2, avgMinutes: 35, score: 82.2, reason: '适合 4 人，规则轻量，适合快速热身。' },
-    { gameId: 3, title: '阿瓦隆', coverImageUrl: 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80', minPlayers: 5, maxPlayers: 10, category: '推理', difficultyLevel: 2, avgMinutes: 45, score: 76.4, reason: '近期热度较高，适合聚会推理偏好。' },
-  ],
+  gameRecommendations: [],
   tableRecommendations: [
     { tableId: 1, code: 'A01', seatCapacity: 4, areaType: 'standard', status: 'idle', score: 94, reason: '容量适合 4 人，当前空闲，近期使用较均衡。' },
     { tableId: 8, code: 'B04', seatCapacity: 4, areaType: 'standard', status: 'idle', score: 90, reason: '容量适合 4 人，当前空闲。' },
@@ -1339,12 +1327,11 @@ function renderGameCatalog() {
   return state.games
     .slice(0, 6)
     .map((game) => {
-      const popularity = state.popularity.find((row) => row.title === game.title || row.game_title === game.title);
-      const plays = popularity?.record_count ?? popularity?.plays ?? popularity?.play_count ?? popularity?.sessions ?? 0;
+      const plays = game.recentPlayCount ?? game.recent_play_count ?? game.playCount ?? 0;
       return `
         <article class="game-card">
-          <img src="${escapeAttr(game.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80')}" alt="${escapeAttr(game.title)}封面" loading="lazy" />
-          <div><strong>${escapeHtml(game.title)}</strong><span>${game.minPlayers || 2}-${game.maxPlayers || 8} 人 · 近 30 天 ${plays} 次</span></div>
+          ${renderGameCover(game, 'dashboard-game-cover')}
+          <div><strong>${escapeHtml(game.title)}</strong><span>${game.minPlayers || 2}-${game.maxPlayers || 8} 人 · 近 30 天 ${plays} 次 · 热度 ${Number(game.hotScore || 0).toFixed(0)}</span></div>
         </article>`;
     })
     .join('');
@@ -1532,8 +1519,16 @@ function renderReportsPage() {
     </div>`;
 }
 
-function customerGameImage(game) {
-  return game.cover_image_url || game.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80';
+function gameCoverUrl(game) {
+  return String(game?.cover_image_url || game?.coverImageUrl || '').trim();
+}
+
+function renderGameCover(game, className) {
+  const url = gameCoverUrl(game);
+  if (url) {
+    return `<img class="${escapeAttr(className)}" src="${escapeAttr(url)}" alt="${escapeAttr(`${game.title || '桌游'}封面`)}" loading="lazy" />`;
+  }
+  return `<div class="${escapeAttr(className)} game-cover-placeholder" role="img" aria-label="${escapeAttr(`${game.title || '桌游'}暂无封面`)}"><span>${escapeHtml(game.title || '暂无封面')}</span></div>`;
 }
 
 function customerDifficulty(game) {
@@ -1583,7 +1578,7 @@ function renderCustomerRentalPanel() {
         <div class="mt-4 grid gap-3">
           ${rentals.length ? rentals.slice(0, 4).map((game) => `
             <article class="flex gap-3 rounded-2xl bg-base-200/70 p-3">
-              <img class="h-16 w-16 shrink-0 rounded-2xl object-cover" src="${escapeAttr(customerGameImage(game))}" alt="${escapeAttr(game.title)}" loading="lazy" />
+              ${renderGameCover(game, 'h-16 w-16 shrink-0 rounded-2xl object-cover')}
               <div class="min-w-0 flex-1">
                 <div class="truncate font-bold">${escapeHtml(game.title)}</div>
                 <div class="mt-1 text-xs text-base-content/55">${game.minPlayers || 2}-${game.maxPlayers || 6}人 · ${game.avgMinutes || 90}分钟 · ${game.availableCopies || 0} 套可借</div>
@@ -1604,7 +1599,7 @@ function renderCustomerGameCatalog(games) {
       ${games.slice(0, 12).map((g) => `
         <article class="card bg-base-100 shadow-md rounded-3xl overflow-hidden border border-base-300/50 transition-all hover:-translate-y-1 hover:shadow-xl">
           <figure class="aspect-[4/3] overflow-hidden bg-base-300">
-            <img class="w-full h-full object-cover" src="${escapeAttr(customerGameImage(g))}" alt="${escapeAttr(g.title)}" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80'" />
+            ${renderGameCover(g, 'w-full h-full object-cover')}
           </figure>
           <div class="card-body p-4 gap-2">
             <h4 class="font-bold text-base leading-tight">${escapeHtml(g.title)}</h4>
@@ -1612,7 +1607,9 @@ function renderCustomerGameCatalog(games) {
               <span class="badge badge-sm badge-primary badge-outline rounded-full">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
               <span class="badge badge-sm badge-secondary badge-outline rounded-full">${g.avg_minutes || g.avgMinutes || 90}分钟</span>
               <span class="badge badge-sm badge-ghost rounded-full">${customerDifficulty(g)}</span>
+              <span class="badge badge-sm badge-ghost rounded-full">热度 ${Number(g.hotScore || 0).toFixed(0)}</span>
             </div>
+            <p class="m-0 text-xs text-base-content/50">近30天 ${g.recentPlayCount || 0} 次 · 总计 ${g.playCount || 0} 次</p>
             ${g.description ? `<p class="text-sm text-base-content/60 line-clamp-3">${escapeHtml(g.description)}</p>` : ''}
           </div>
         </article>`).join('')}
@@ -1785,10 +1782,10 @@ async function renderGameManagementPage() {
               const dif = diffLabels[g.difficulty] || '中等';
               return `
               <div class="game-card" data-game-id="${g.id}">
-                <img class="game-card-img" src="${escapeAttr(g.coverImageUrl || 'https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80')}" alt="${escapeAttr(g.title)}" onerror="this.src='https://images.unsplash.com/photo-1610890716171-6b1bb98ffd09?auto=format&fit=crop&w=640&q=80'" />
+                ${renderGameCover(g, 'game-card-img')}
                 <div class="game-card-body">
                   <h3>${escapeHtml(g.title)}${g.publishYear ? `<small style="font-weight:400;color:var(--text-soft);font-size:13px">${g.publishYear}</small>` : ''}</h3>
-                  <p class="meta">${g.minPlayers}-${g.maxPlayers}人 · ${g.avgMinutes}分钟 · ${dif} · ${escapeHtml(g.category)}</p>
+                  <p class="meta">${g.minPlayers}-${g.maxPlayers}人 · ${g.avgMinutes}分钟 · ${dif} · ${escapeHtml(g.category)} · 近30天 ${g.recentPlayCount || 0} 次 · 热度 ${Number(g.hotScore || 0).toFixed(0)}</p>
                   ${g.description ? `<p class="desc">${escapeHtml(g.description)}</p>` : ''}
                   <div style="display:flex;gap:6px;margin-top:12px">
                     <button class="btn btn-ghost btn-sm" data-edit-game="${g.id}">编辑</button>
