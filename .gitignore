@@ -1,7 +1,5 @@
 node_modules/
 web/dist/
-web-react/dist/
-server-nest/dist/
 .DS_Store
 *.aux
 *.bbl
@@ -24,3 +22,5 @@ server-nest/dist/
 release/
 docs.zip
 *.asar
+docs/demo/
+scripts/start-demo-recording.ps1
