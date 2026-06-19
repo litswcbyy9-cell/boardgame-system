@@ -114,10 +114,21 @@ const visibleNavItems = navItems.filter((item) => !hiddenAdminPageIds.has(item.i
 const publicPageIds = new Set(['customer']);
 const navigateIds = new Set([...visibleNavItems.map((item) => item.id)]);
 const pageIds = new Set([...navigateIds, ...publicPageIds]);
+const ADMIN_PATH = '/admin';
+
+function isAdminPath() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path === ADMIN_PATH;
+}
+
+function defaultPageForLocation() {
+  return isAdminPath() ? 'dashboard' : 'customer';
+}
 
 function pageFromHash() {
-  const key = window.location.hash.replace(/^#\/?/, '').trim() || 'dashboard';
-  return pageIds.has(key) ? key : 'dashboard';
+  const fallback = defaultPageForLocation();
+  const key = window.location.hash.replace(/^#\/?/, '').trim() || fallback;
+  return pageIds.has(key) ? key : fallback;
 }
 
 function currentPageMeta() {
@@ -461,8 +472,8 @@ function setAuth(token, user) {
 async function enterAuthenticatedApp() {
   state.activePage = 'dashboard';
   const nextHash = '#/dashboard';
-  if (window.location.hash !== nextHash) {
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${nextHash}`);
+  if (!isAdminPath() || window.location.hash !== nextHash) {
+    window.history.replaceState(null, '', `${ADMIN_PATH}${nextHash}`);
   }
   await render();
   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -1709,7 +1720,7 @@ function renderPublicCustomerShell() {
         <h1 class="m-0 text-lg font-extrabold tracking-tight">
           <span class="bg-gradient-to-r from-orange-500 to-purple-600 bg-clip-text text-transparent">🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</span>
         </h1>
-        ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
+        ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="/admin#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
       </header>
       ${renderCustomerBookingPage()}
     </div>
@@ -2266,7 +2277,15 @@ async function renderPageContent(summary) {
 }
 
 function navigateToPage(pageId) {
-  const nextPage = pageIds.has(pageId) ? pageId : 'dashboard';
+  const nextPage = pageIds.has(pageId) ? pageId : defaultPageForLocation();
+  if (nextPage === 'customer' && isAdminPath()) {
+    window.location.assign('/');
+    return;
+  }
+  if (navigateIds.has(nextPage) && !isAdminPath()) {
+    window.location.assign(`${ADMIN_PATH}#/${nextPage}`);
+    return;
+  }
   const nextHash = `#/${nextPage}`;
   if (window.location.hash !== nextHash) {
     window.location.hash = nextHash;
@@ -3310,8 +3329,17 @@ async function loadPublicData() {
 }
 
 async function init() {
-  if (!window.location.hash) {
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/dashboard`);
+  if (!window.location.hash && isAdminPath()) {
+    window.history.replaceState(null, '', `${ADMIN_PATH}#/dashboard`);
+  }
+  state.activePage = pageFromHash();
+  if (!isAdminPath() && navigateIds.has(state.activePage)) {
+    window.location.replace(`${ADMIN_PATH}#/${state.activePage}`);
+    return;
+  }
+  if (isAdminPath() && state.activePage === 'customer') {
+    window.location.replace('/');
+    return;
   }
   if (!state.authToken) {
     if (state.activePage === 'customer') await loadPublicData();
@@ -3340,6 +3368,14 @@ async function init() {
 window.addEventListener('hashchange', () => {
   const nextPage = pageFromHash();
   if (state.activePage === nextPage) return;
+  if (!isAdminPath() && navigateIds.has(nextPage)) {
+    window.location.replace(`${ADMIN_PATH}#/${nextPage}`);
+    return;
+  }
+  if (isAdminPath() && nextPage === 'customer') {
+    window.location.replace('/');
+    return;
+  }
   state.activePage = nextPage;
   if (nextPage === 'customer') {
     void loadPublicData().then(render);
