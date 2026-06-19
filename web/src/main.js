@@ -1176,14 +1176,14 @@ function renderStaffPage() {
 
   return `
     <section class="panel members-panel staff-panel" id="staff">
-      <div class="section-head">
+      <div class="flex flex-wrap items-end justify-between gap-4 mb-5">
         <div>
-          <h2>员工管理</h2>
-          <span>员工号是门店业务身份；后台账号只负责登录和权限。</span>
+          <h2 class="text-2xl font-bold tracking-tight m-0">员工管理</h2>
+          <span class="text-sm text-base-content/55">员工号是门店业务身份；后台账号只负责登录和权限。</span>
         </div>
-        <label class="member-search">
-          <span>搜索</span>
-          <input class="input" data-field="staffSearch" placeholder="姓名 / 手机 / 员工号 / 账号" value="${escapeAttr(state.staffSearch)}" />
+        <label class="form-control w-full sm:w-80">
+          <span class="label-text text-xs font-semibold mb-1">搜索</span>
+          <input class="input input-bordered w-full rounded-xl" data-field="staffSearch" placeholder="姓名 / 手机 / 员工号 / 账号" value="${escapeAttr(state.staffSearch)}" />
         </label>
       </div>
       <div class="members-grid">

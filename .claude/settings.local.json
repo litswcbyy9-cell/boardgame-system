@@ -44,7 +44,8 @@
       "Bash(pkill -f \"node.*src/index\")",
       "Bash(SERVE_WEB=1 nohup node src/index.js)",
       "Bash(awk '{print $5}')",
-      "Bash(xargs -r -I{} taskkill //F //PID {})"
+      "Bash(xargs -r -I{} taskkill //F //PID {})",
+      "Bash(node src/index.js)"
     ]
   }
 }
