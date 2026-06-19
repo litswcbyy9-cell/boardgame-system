@@ -186,9 +186,6 @@ function tenantId(req) {
 app.use(attachAuth);
 app.use(auditSuccessfulWrites);
 
-app.use(attachAuth);
-app.use(auditSuccessfulWrites);
-
 async function callReserve(tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd) {
   const conn = await pool.getConnection();
   try {
