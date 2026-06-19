@@ -1,0 +1,16 @@
+# Caddy 自动 HTTPS：自动申请并续期 Let's Encrypt 证书
+# {$SITE_DOMAIN} 从 docker-compose 的 environment 注入
+{$SITE_DOMAIN} {
+    # 反代到 web 容器（Nginx 托管前端 + 已配 /api 反代到 api:9898）
+    reverse_proxy web:80
+
+    encode gzip zstd
+
+    header {
+        # 安全响应头
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "no-referrer"
+    }
+}

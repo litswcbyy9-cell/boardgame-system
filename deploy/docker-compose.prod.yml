@@ -1,0 +1,77 @@
+# 生产部署：Caddy(HTTPS) → Web(Nginx) + API(Node) + MySQL
+# 用法见 deploy/部署指南.md
+# 启动：docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: boardgame-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: boardgame
+      MYSQL_USER: boardgame
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - bg_mysql:/var/lib/mysql
+      - ../db/init:/docker-entrypoint-initdb.d:ro
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-p${MYSQL_ROOT_PASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: boardgame
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: boardgame
+      PORT: 9898
+      ALLOW_PUBLIC_REGISTER: 0
+      # DeepSeek / OpenAI 兼容大模型
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - '9898'
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    restart: always
+    depends_on:
+      - api
+    expose:
+      - '80'
+
+  # Caddy 自动申请并续期 Let's Encrypt 证书，反代到 web 容器
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  bg_mysql:
+  caddy_data:
+  caddy_config:

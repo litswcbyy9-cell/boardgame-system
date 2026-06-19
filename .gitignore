@@ -19,6 +19,8 @@ web/dist/
 *.snm
 *.vrb
 .env
+.env.*
+!.env.*.example
 release/
 docs.zip
 *.asar
