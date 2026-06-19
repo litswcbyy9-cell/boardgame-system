@@ -455,6 +455,16 @@ function setAuth(token, user) {
   else window.localStorage.removeItem(AUTH_KEY);
 }
 
+async function enterAuthenticatedApp() {
+  state.activePage = 'dashboard';
+  const nextHash = '#/dashboard';
+  if (window.location.hash !== nextHash) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${nextHash}`);
+  }
+  await render();
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
 function ensureRefreshTimer() {
   if (refreshTimer) return;
   refreshTimer = window.setInterval(() => {
@@ -466,7 +476,8 @@ function showToast(message, type = 'ok') {
   const host = $('#toast-host');
   if (!host || !message) return;
   const toast = document.createElement('div');
-  toast.className = `toast toast--${type === 'err' ? 'err' : 'ok'}`;
+  toast.className = `app-toast app-toast--${type === 'err' ? 'err' : 'ok'}`;
+  toast.setAttribute('role', type === 'err' ? 'alert' : 'status');
   toast.textContent = message;
   host.appendChild(toast);
   window.setTimeout(() => toast.remove(), 4200);
@@ -1375,8 +1386,7 @@ function renderAuthScreen() {
           </div>
         </div>
       </section>
-    </div>
-    <div id="toast-host" class="toast-host"></div>`;
+    </div>`;
 }
 
 const navEmoji = {
@@ -1633,8 +1643,7 @@ function renderPublicCustomerShell() {
       </header>
       ${renderCustomerBookingPage()}
     </div>
-    ${renderCustomerChatWidget()}
-    <div id="toast-host" class="toast-host"></div>`;
+    ${renderCustomerChatWidget()}`;
 }
 
 // 顾客客服气泡
@@ -2490,6 +2499,7 @@ async function onLogin() {
       }),
     });
     setAuth(result.token, result.user);
+    await enterAuthenticatedApp();
     showToast('登录成功');
     await refresh();
     ensureRefreshTimer();
@@ -2509,6 +2519,7 @@ async function onRegister() {
       }),
     });
     setAuth(result.token, result.user);
+    await enterAuthenticatedApp();
     state.registerPassword = '';
     showToast('账号已创建');
     await refresh();

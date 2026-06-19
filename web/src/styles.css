@@ -1787,26 +1787,44 @@ img {
   position: fixed;
   right: 18px;
   bottom: 18px;
-  z-index: 100;
+  z-index: 3000;
   display: grid;
-  gap: 8px;
-  max-width: min(420px, calc(100vw - 36px));
+  justify-items: end;
+  gap: 10px;
+  max-width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
 }
 
-.toast {
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: #ffffff;
-  background: var(--charcoal);
-  box-shadow: var(--shadow-md);
+.app-toast {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  color: #fff;
+  background: rgba(29, 29, 31, 0.94);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.12);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0;
+  backdrop-filter: blur(18px);
+  animation: appToastIn 180ms ease-out;
 }
 
-.toast--err {
-  background: var(--rose);
+.app-toast--err {
+  background: rgba(225, 29, 72, 0.95);
 }
 
-.toast--ok {
-  background: var(--green);
+.app-toast--ok {
+  background: rgba(22, 163, 74, 0.95);
+}
+
+@keyframes appToastIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2232,12 +2250,6 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
 .empty-state h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
 .empty-state p { margin: 0; color: var(--text-muted); font-size: 14px; }
-
-/* Toast */
-.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 2000; padding: 12px 24px; border-radius: var(--radius, 12px); font-size: 14px; font-weight: 600; box-shadow: var(--shadow-lg); animation: toastIn 0.3s ease; }
-@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-.toast-ok { background: var(--green); color: #fff; }
-.toast-err { background: var(--rose); color: #fff; }
 
 /* ===== AI 助手聊天面板 ===== */
 .ai-chat-panel { display: flex; flex-direction: column; height: calc(100vh - 240px); min-height: 420px; }
