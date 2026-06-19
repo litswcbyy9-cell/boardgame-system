@@ -101,15 +101,15 @@ const navItems = [
   },
   {
     id: 'staff-mgmt',
-    label: '权限管理',
+    label: '员工与权限',
     icon: 'staff',
     eyebrow: 'Admin',
     title: '员工与权限管理',
-    description: '管理员工账号、角色权限和启用状态。需要管理员权限。',
+    description: '管理员工档案、后台账号、店长/员工权限和启用状态。',
   },
 ];
 
-const hiddenAdminPageIds = new Set(['staff', 'staff-mgmt', 'ai']);
+const hiddenAdminPageIds = new Set(['staff', 'billing', 'ai']);
 const visibleNavItems = navItems.filter((item) => !hiddenAdminPageIds.has(item.id));
 const publicPageIds = new Set(['customer']);
 const navigateIds = new Set([...visibleNavItems.map((item) => item.id)]);
@@ -213,6 +213,7 @@ const state = {
   popularity: [],
   tableUtilization: [],
   revenue: null,
+  maintenance: null,
   venue: null,
   memberReservations: [],
   memberReservationMemberId: null,
@@ -471,7 +472,7 @@ function ensureRefreshTimer() {
   if (refreshTimer) return;
   refreshTimer = window.setInterval(() => {
     if (state.currentUser) void refresh();
-  }, 30000);
+  }, 15000);
 }
 
 function showToast(message, type = 'ok') {
@@ -500,6 +501,7 @@ function applyDemoData(errorMessage = '') {
     popularity: demoData.popularity,
     tableUtilization: demoData.tableUtilization,
     revenue: demoData.revenue,
+    maintenance: { expiredReservations: 0, autoClosedSessions: 0, dueSoonSessions: [], reservationGraceMinutes: 15, checkedAt: new Date().toISOString() },
     venue: demoData.venue,
     health: '演示数据',
     mode: 'demo',
@@ -516,6 +518,12 @@ function applyDemoData(errorMessage = '') {
 async function refresh() {
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const maintenance = await api('/api/ops/maintenance', { method: 'POST' }).catch((error) => ({
+      expiredReservations: 0,
+      autoClosedSessions: 0,
+      dueSoonSessions: [],
+      error: error.message,
+    }));
     const [health, tables, players, members, games, reservations, openSessions, leaderboard, venue, revenue, popularity, tableUtilization] =
       await Promise.all([
         api('/api/health'),
@@ -543,6 +551,7 @@ async function refresh() {
       leaderboard,
       venue,
       revenue,
+      maintenance,
       popularity,
       tableUtilization,
       health: health?.db ? '数据库已连接' : 'API 可用',
@@ -631,6 +640,10 @@ function reservationsForMember(memberId) {
   return state.reservations.filter((reservation) => Number(reservation.playerId) === Number(memberId));
 }
 
+function pendingReservations() {
+  return state.reservations.filter((reservation) => reservation.status === 'pending');
+}
+
 function openOnSelected() {
   const session = state.openSessions.find((item) => item.tableId === state.selectedId);
   if (session) return session;
@@ -648,6 +661,7 @@ function openOnSelected() {
     guestPhone: table.currentSessionGuestPhone,
     partySize: table.currentSessionPartySize,
     startedAt: table.currentSessionStartedAt,
+    reservedEnd: table.currentSessionReservedEnd,
   };
 }
 
@@ -687,6 +701,16 @@ function sessionPhone(session) {
 function sessionPartySize(session) {
   const n = Number(session?.partySize);
   return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function sessionTiming(session) {
+  if (!session?.reservedEnd) return { label: '计时中', tone: 'info', minutesLeft: null };
+  const end = new Date(session.reservedEnd).getTime();
+  if (!Number.isFinite(end)) return { label: '计时中', tone: 'info', minutesLeft: null };
+  const minutesLeft = Math.ceil((end - Date.now()) / 60000);
+  if (minutesLeft <= 0) return { label: '已超时', tone: 'warning', minutesLeft };
+  if (minutesLeft <= 15) return { label: `${minutesLeft} 分钟后结束`, tone: 'warning', minutesLeft };
+  return { label: '计时中', tone: 'info', minutesLeft };
 }
 
 function reservationsForTable(tableId) {
@@ -859,7 +883,7 @@ function renderTableOverview(table, openSession, pending) {
         <div><span>当前开台</span><strong>${openSession ? `#${openSession.id}` : '无'}</strong></div>
         <div><span>预约队列</span><strong>${pending.length} 组</strong></div>
       </div>
-      <div class="match-hint">预约超过开始时间 15 分钟仍未入场时，系统会自动标记为未到店并释放桌位；员工也可以在队列中手动取消迟到预约。</div>
+      <div class="match-hint">预约超过开始时间 15 分钟仍未入场时会自动标记未到；已入场预约超过结束时间会自动关台并释放桌位，收费仍由员工确认。</div>
     </section>`;
 }
 
@@ -871,16 +895,18 @@ function renderCurrentUse(openSession) {
         <div class="empty-state compact">当前桌位没有进行中的对局。</div>
       </section>`;
   }
+  const timing = sessionTiming(openSession);
 
   return `
     <section class="table-detail-section current-use-card">
-      <div class="mini-section-head"><strong>正在使用</strong><span>session #${openSession.id}</span></div>
+      <div class="mini-section-head"><strong>正在使用</strong><span class="badge ${timing.tone === 'warning' ? 'badge-warning' : 'badge-info'} badge-sm">${escapeHtml(timing.label)}</span></div>
       <div class="reservation-detail-grid">
         <div><span>使用人</span><strong>${escapeHtml(sessionDisplayName(openSession))}</strong></div>
         <div><span>联系电话</span><strong>${escapeHtml(sessionPhone(openSession))}</strong></div>
         <div><span>人数</span><strong>${sessionPartySize(openSession)} 人</strong></div>
         <div><span>来源</span><strong>${openSession.reservationId ? `预约 #${openSession.reservationId}` : '现场开台'}</strong></div>
         <div><span>开台时间</span><strong>${escapeHtml(formatDateTime(openSession.startedAt))}</strong></div>
+        <div><span>预约结束</span><strong>${openSession.reservedEnd ? escapeHtml(formatDateTime(openSession.reservedEnd)) : '未设置'}</strong></div>
         <div><span>已进行</span><strong>${formatDurationFrom(openSession.startedAt)}</strong></div>
       </div>
     </section>`;
@@ -1263,8 +1289,9 @@ function renderStaffPage() {
 }
 
 function renderReservations() {
-  if (!state.reservations.length) return '<div class="empty-state compact">暂无待处理预约。</div>';
-  return state.reservations
+  const rows = pendingReservations();
+  if (!rows.length) return '<div class="empty-state compact">暂无待处理预约。</div>';
+  return rows
     .slice(0, 8)
     .map(
       (r) => `
@@ -1281,11 +1308,14 @@ function renderSessions() {
   return state.openSessions
     .slice(0, 8)
     .map(
-      (s) => `
+      (s) => {
+        const timing = sessionTiming(s);
+        return `
         <div class="data-row">
           <div><strong>#${s.id} ${escapeHtml(s.tableCode)}</strong><span>${escapeHtml(sessionDisplayName(s))} · ${sessionPartySize(s)} 人 · 已进行 ${formatDurationFrom(s.startedAt)}</span></div>
-          <span class="soft-chip">计时中</span>
-        </div>`
+          <span class="soft-chip">${escapeHtml(timing.label)}</span>
+        </div>`;
+      }
     )
     .join('');
 }
@@ -1335,6 +1365,34 @@ function renderGameCatalog() {
         </article>`;
     })
     .join('');
+}
+
+function renderOpsAlerts() {
+  const maintenance = state.maintenance || {};
+  const dueSoon = Array.isArray(maintenance.dueSoonSessions) && maintenance.dueSoonSessions.length
+    ? maintenance.dueSoonSessions
+    : state.openSessions
+        .map((session) => ({ ...session, ...sessionTiming(session) }))
+        .filter((session) => Number(session.minutesLeft) > 0 && Number(session.minutesLeft) <= 15)
+        .slice(0, 4);
+  const expired = Number(maintenance.expiredReservations || 0);
+  const closed = Number(maintenance.autoClosedSessions || 0);
+  if (!expired && !closed && !dueSoon.length && !maintenance.error) return '';
+  const rows = [];
+  if (expired) rows.push(`已自动标记 ${expired} 条超时未到预约`);
+  if (closed) rows.push(`已自动关台 ${closed} 个超过预约结束时间的对局`);
+  if (maintenance.error) rows.push(`自动维护检查失败：${maintenance.error}`);
+  dueSoon.forEach((item) => {
+    const minutes = item.minutesLeft ?? item.minutes_left ?? '?';
+    rows.push(`${item.tableCode || item.table_code || '桌位'} · ${item.guestName || item.guest_name || '客人'} 约 ${minutes} 分钟后结束`);
+  });
+  return `
+    <section class="alert border border-warning/25 bg-warning/10 rounded-2xl shadow-sm">
+      <div>
+        <h3 class="font-bold text-sm">运营提醒</h3>
+        <div class="text-sm opacity-80">${rows.map((row) => `<span class="mr-4">${escapeHtml(row)}</span>`).join('')}</div>
+      </div>
+    </section>`;
 }
 
 function renderAuthScreen() {
@@ -1409,6 +1467,7 @@ function renderNav() {
 }
 
 function renderDashboardPage(summary) {
+  const pendingCount = pendingReservations().length;
   const card = (title, badge, body) => `
     <div class="card bg-base-100 shadow-md border border-base-200 rounded-2xl">
       <div class="card-body p-5">
@@ -1422,8 +1481,9 @@ function renderDashboardPage(summary) {
   return `
     <div class="dash-fresh space-y-5 pt-2">
       <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="关键指标">${renderMetricCards(summary)}</section>
+      ${renderOpsAlerts()}
       <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        ${card('待处理预约', `${state.reservations.length} 条`, renderReservations())}
+        ${card('待处理预约', `${pendingCount} 条`, renderReservations())}
         ${card('进行中对局', `${state.openSessions.length} 局`, renderSessions())}
         ${card('会员排行', '胜率', renderLeaderboard())}
       </section>
@@ -1448,6 +1508,7 @@ function renderStaffManagementPage() {
 }
 
 function renderSessionsPage() {
+  const pendingCount = pendingReservations().length;
   const card = (title, badge, body) => `
     <div class="card bg-base-100 shadow-md border border-base-200 rounded-2xl">
       <div class="card-body p-5">
@@ -1461,7 +1522,7 @@ function renderSessionsPage() {
   return `
     <div class="space-y-5 pt-2">
       <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        ${card('待处理预约', `${state.reservations.length} 条`, renderReservations())}
+        ${card('待处理预约', `${pendingCount} 条`, renderReservations())}
         ${card('进行中对局', `${state.openSessions.length} 局`, renderSessions())}
         ${card('会员排行', '胜率', renderLeaderboard())}
       </section>
@@ -1837,88 +1898,92 @@ async function renderGameManagementPage() {
 // Phase 2: 员工权限管理页面
 // =====================================================================
 async function renderStaffAdminPage() {
-  const token = window.localStorage.getItem(AUTH_KEY) || '';
-  const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-  const isAdmin = state.currentUser?.role === 'admin';
+  const isManager = state.currentUser?.role === 'admin';
+  const roleLabel = (role) => (role === 'admin' ? '店长' : '员工');
 
   let html = '';
   try {
-    const [staffRes, tenantRes] = await Promise.all([
-      fetch('/api/staff-mgmt/list', { headers: h }),
-      fetch('/api/tenant/info', { headers: h }),
-    ]);
-    const staffData = await staffRes.json();
-    const tenantData = await tenantRes.json();
+    if (!isManager) {
+      return `<div class="page-hero"><div class="eyebrow">Staff</div><h2>员工与权限</h2><p>员工账号可以使用预约、开台、会员和战绩功能；店长账号可以管理员工与权限。</p></div>
+        <div class="apple-card"><p style="text-align:center;color:var(--text-muted)">当前账号权限：员工。如需调整账号或新增员工，请使用店长账号登录。</p></div>`;
+    }
+    const staffData = await api('/api/staff-mgmt/list');
     const staff = staffData.data || [];
+    state.staff = staff;
+    const q = String(state.staffSearch || '').trim().toLowerCase();
+    const visibleStaff = q
+      ? staff.filter((s) => [s.fullName, s.displayName, s.username, s.employeeNo, s.phone, s.position].some((v) => String(v || '').toLowerCase().includes(q)))
+      : staff;
+    const managers = staff.filter((s) => s.role === 'admin' && s.status === 'active').length;
+    const employees = staff.filter((s) => s.role !== 'admin' && s.status === 'active').length;
+    const active = staff.filter((s) => s.status === 'active').length;
 
-    const statsHtml = tenantData ? `
+    html = `
       <div class="stat-grid" style="margin-bottom:24px">
-        <div class="stat-card"><div class="stat-value">${tenantData.staffCount||0}</div><div class="stat-label">总员工数</div></div>
-        <div class="stat-card"><div class="stat-value">${tenantData.gameCount||0}</div><div class="stat-label">桌游数量</div></div>
-        <div class="stat-card"><div class="stat-value">${tenantData.planType||'free'}</div><div class="stat-label">订阅方案</div></div>
-        <div class="stat-card"><div class="stat-value">${tenantData.status||'active'}</div><div class="stat-label">租户状态</div></div>
-      </div>` : '';
-
-    html = statsHtml + (isAdmin ? `
-      <div class="toolbar">
-        <div class="search-bar" style="flex:1"><input type="text" placeholder="搜索员工..." /></div>
-        <button class="btn btn-primary" id="btn-add-staff">+ 添加员工</button>
+        <div class="stat-card"><div class="stat-value">${staff.length}</div><div class="stat-label">账号总数</div></div>
+        <div class="stat-card"><div class="stat-value">${managers}</div><div class="stat-label">店长</div></div>
+        <div class="stat-card"><div class="stat-value">${employees}</div><div class="stat-label">员工</div></div>
+        <div class="stat-card"><div class="stat-value">${active}</div><div class="stat-label">启用中</div></div>
+      </div>
+      <div class="toolbar" style="align-items:center">
+        <div class="search-bar" style="flex:1"><input type="text" data-field="staffSearch" placeholder="搜索姓名、账号、工号、手机号或岗位" value="${escapeAttr(state.staffSearch)}" /></div>
+        <button class="btn btn-primary" id="btn-add-staff" type="button">+ 添加员工</button>
       </div>
       <div class="apple-card" style="padding:0;overflow:hidden">
         <table class="data-table">
-          <thead><tr><th>员工</th><th>账号</th><th>角色</th><th>岗位</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>员工档案</th><th>后台账号</th><th>权限</th><th>岗位</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
           <tbody>
-            ${staff.length === 0 ? '<tr><td colspan="7" class="empty">暂无员工</td></tr>' : staff.map(s => {
+            ${visibleStaff.length === 0 ? '<tr><td colspan="7" class="empty">暂无员工</td></tr>' : visibleStaff.map(s => {
               const isMe = s.id === state.currentUser?.id;
               return `
               <tr style="${isMe ? 'background:var(--primary-soft)' : ''}">
-                <td><strong>${escapeHtml(s.fullName||s.displayName)}</strong>${isMe ? ' <span class="badge badge-blue">你</span>' : ''}<br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(s.employeeNo||'')}</span></td>
-                <td>${escapeHtml(s.username)}</td>
-                <td><span class="badge ${s.role==='admin'?'badge-blue':'badge-green'}">${s.role==='admin'?'管理员':'员工'}</span></td>
+                <td><strong>${escapeHtml(s.fullName||s.displayName)}</strong>${isMe ? ' <span class="badge badge-blue">你</span>' : ''}<br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(s.employeeNo||'')} · ${escapeHtml(s.phone || '未填手机号')}</span></td>
+                <td><strong>${escapeHtml(s.username)}</strong><br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(s.displayName || '')}</span></td>
+                <td><span class="badge ${s.role==='admin'?'badge-blue':'badge-green'}">${roleLabel(s.role)}</span></td>
                 <td>${escapeHtml(s.position||'')}</td>
                 <td><span class="badge ${s.status==='active'?'badge-green':'badge-rose'}">${s.status==='active'?'启用':'禁用'}</span></td>
                 <td style="font-size:13px;color:var(--text-muted)">${new Date(s.createdAt).toLocaleDateString('zh-CN')}</td>
-                <td>${isMe
-                  ? '<span style="font-size:12px;color:var(--text-soft)">当前账号</span>'
-                  : `<div class="action-group">
-                      <button class="icon-btn" data-toggle-role="${s.id}" data-current-role="${s.role}" title="切换角色">🔄</button>
-                      <button class="icon-btn ${s.status==='active'?'danger':''}" data-toggle-status="${s.id}" data-current-status="${s.status}" title="${s.status==='active'?'禁用':'启用'}">${s.status==='active'?'⏸':'▶'}</button>
-                    </div>`
-                }</td>
+                <td><div class="action-group">
+                  <button class="btn btn-ghost btn-sm" data-edit-staff-account="${s.id}" type="button">编辑</button>
+                  ${isMe
+                    ? '<span style="font-size:12px;color:var(--text-soft)">当前账号</span>'
+                    : `<button class="btn btn-secondary btn-sm" data-toggle-role="${s.id}" data-current-role="${s.role}" type="button">${s.role==='admin'?'设为员工':'设为店长'}</button>
+                       <button class="btn btn-ghost btn-sm" style="color:${s.status==='active'?'var(--rose)':'var(--green)'}" data-toggle-status="${s.id}" data-current-status="${s.status}" type="button">${s.status==='active'?'停用':'启用'}</button>`}
+                </div></td>
               </tr>`;}).join('')}
           </tbody>
         </table>
-      </div>
-      ` : `<div class="apple-card"><p style="text-align:center;color:var(--text-muted)">需要管理员权限才能管理员工。当前角色：${state.currentUser?.role||'未知'}</p></div>`);
+      </div>`;
   } catch (e) {
-    html = '<div class="empty-state"><div class="icon">⚠️</div><h3>加载失败</h3><p>可能需要管理员权限</p></div>';
+    html = '<div class="empty-state"><div class="icon">⚠️</div><h3>加载失败</h3><p>请确认当前账号是店长，且后端服务正常。</p></div>';
   }
 
-  return `<div class="page-hero"><div class="eyebrow">Admin</div><h2>员工与权限管理</h2><p>管理员工账号、角色权限和启用状态</p></div>
+  return `<div class="page-hero"><div class="eyebrow">Staff</div><h2>员工与权限</h2><p>单店只保留两级权限：店长负责员工、目录、优惠和租借设置；员工负责日常预约、开台、会员与战绩。</p></div>
     ${html}
     <div id="staff-modal" class="modal-overlay" style="display:none">
       <div class="modal-dialog">
-        <div class="modal-header"><h3>添加员工</h3><button class="modal-close" id="btn-close-staff-modal">&times;</button></div>
+        <div class="modal-header"><h3 id="staff-modal-title">添加员工</h3><button class="modal-close" id="btn-close-staff-modal">&times;</button></div>
         <div class="modal-body">
           <form id="staff-form">
+            <input type="hidden" name="id" id="staff-edit-id" />
             <div class="form-row">
-              <div class="form-group"><label>账号 *</label><input type="text" name="username" class="form-input" required placeholder="登录名" /></div>
-              <div class="form-group"><label>显示名称 *</label><input type="text" name="displayName" class="form-input" required placeholder="显示名称" /></div>
+              <div class="form-group"><label>登录账号 *</label><input type="text" name="username" id="staff-username" class="form-input" required placeholder="登录名" /></div>
+              <div class="form-group"><label>显示名称 *</label><input type="text" name="displayName" id="staff-display-name" class="form-input" required placeholder="显示名称" /></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label>密码 *</label><input type="password" name="password" class="form-input" required placeholder="至少6位" /></div>
-              <div class="form-group"><label>角色</label><select name="role" class="form-input"><option value="staff">员工</option><option value="admin">管理员</option></select></div>
+              <div class="form-group"><label>密码 <span id="staff-password-hint">*</span></label><input type="password" name="password" id="staff-password" class="form-input" placeholder="新增必填；编辑时留空不修改" /></div>
+              <div class="form-group"><label>权限</label><select name="role" id="staff-role" class="form-input"><option value="staff">员工</option><option value="admin">店长</option></select></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label>真实姓名</label><input type="text" name="fullName" class="form-input" placeholder="员工真实姓名" /></div>
-              <div class="form-group"><label>岗位</label><input type="text" name="position" class="form-input" placeholder="如：店长、店员" value="店员" /></div>
+              <div class="form-group"><label>真实姓名</label><input type="text" name="fullName" id="staff-full-name" class="form-input" placeholder="员工真实姓名" /></div>
+              <div class="form-group"><label>岗位</label><input type="text" name="position" id="staff-position" class="form-input" placeholder="如：店长、店员" value="店员" /></div>
             </div>
-            <div class="form-group"><label>手机号</label><input type="tel" name="phone" class="form-input" placeholder="手机号" /></div>
+            <div class="form-group"><label>手机号</label><input type="tel" name="phone" id="staff-phone" class="form-input" placeholder="手机号" /></div>
           </form>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" id="btn-cancel-staff">取消</button>
-          <button class="btn btn-primary" id="btn-save-staff">创建</button>
+          <button class="btn btn-primary" id="btn-save-staff">保存</button>
         </div>
       </div>
     </div>`;
@@ -2404,7 +2469,9 @@ function bind() {
       void loadMemberReservations(state.selectedMemberId, { renderAfter: true });
     })
   );
-  root.querySelector('[data-field="staffSearch"]')?.addEventListener('change', () => void refresh());
+  root.querySelector('[data-field="staffSearch"]')?.addEventListener('input', () => {
+    if (state.activePage === 'staff-mgmt') void render();
+  });
   root.querySelectorAll('[data-staff-id]').forEach((button) =>
     button.addEventListener('click', () => {
       state.selectedStaffId = Number(button.getAttribute('data-staff-id'));
@@ -2514,11 +2581,14 @@ function bind() {
   });
 
   // ---- Staff Management ----
-  $('#btn-add-staff')?.addEventListener('click', () => { $('#staff-modal').style.display = 'flex'; });
-  $('#btn-close-staff-modal')?.addEventListener('click', () => { $('#staff-modal').style.display = 'none'; });
-  $('#btn-cancel-staff')?.addEventListener('click', () => { $('#staff-modal').style.display = 'none'; });
-  $('#btn-save-staff')?.addEventListener('click', () => void onAddStaffAccount());
+  $('#btn-add-staff')?.addEventListener('click', () => openStaffAccountModal(null));
+  $('#btn-close-staff-modal')?.addEventListener('click', closeStaffAccountModal);
+  $('#btn-cancel-staff')?.addEventListener('click', closeStaffAccountModal);
+  $('#btn-save-staff')?.addEventListener('click', () => void onSaveStaffAccount());
   $('#staff-modal')?.addEventListener('click', (e) => { if (e.target.id === 'staff-modal') e.target.style.display = 'none'; });
+  root.querySelectorAll('[data-edit-staff-account]').forEach(btn => {
+    btn.addEventListener('click', () => openStaffAccountModal(Number(btn.getAttribute('data-edit-staff-account'))));
+  });
   root.querySelectorAll('[data-toggle-role]').forEach(btn => {
     btn.addEventListener('click', () => void onToggleStaffRole(Number(btn.getAttribute('data-toggle-role')), btn.getAttribute('data-current-role')));
   });
@@ -3109,26 +3179,62 @@ async function onDeleteGame(gameId) {
 }
 
 // ---- Staff Management (Phase 2) ----
-async function onAddStaffAccount() {
+function openStaffAccountModal(userId) {
+  const form = document.getElementById('staff-form');
+  const modal = $('#staff-modal');
+  if (!form || !modal) return;
+  form.reset();
+  const staff = userId ? state.staff.find((item) => Number(item.id) === Number(userId)) : null;
+  document.getElementById('staff-edit-id').value = staff?.id || '';
+  document.getElementById('staff-modal-title').textContent = staff ? '编辑员工' : '添加员工';
+  document.getElementById('staff-password-hint').textContent = staff ? '（可选）' : '*';
+  document.getElementById('staff-username').disabled = Boolean(staff);
+  document.getElementById('staff-username').value = staff?.username || '';
+  document.getElementById('staff-display-name').value = staff?.displayName || staff?.fullName || '';
+  document.getElementById('staff-full-name').value = staff?.fullName || staff?.displayName || '';
+  document.getElementById('staff-phone').value = staff?.phone || '';
+  document.getElementById('staff-position').value = staff?.position || (staff?.role === 'admin' ? '店长' : '店员');
+  document.getElementById('staff-role').value = staff?.role || 'staff';
+  document.getElementById('staff-password').value = '';
+  modal.style.display = 'flex';
+}
+
+function closeStaffAccountModal() {
+  const modal = $('#staff-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function onSaveStaffAccount() {
   const form = document.getElementById('staff-form');
   if (!form) return;
   const fd = new FormData(form);
+  const id = fd.get('id')?.toString();
   const payload = {
     username: fd.get('username')?.toString().trim(),
     displayName: fd.get('displayName')?.toString().trim(),
-    password: fd.get('password')?.toString(),
     role: fd.get('role')?.toString()||'staff',
     fullName: fd.get('fullName')?.toString().trim()||null,
     position: fd.get('position')?.toString().trim()||'店员',
     phone: fd.get('phone')?.toString().trim()||null,
   };
-  if (!payload.username||!payload.displayName||!payload.password) { showToast('请填写账号、显示名称和密码', 'err'); return; }
-  if (payload.password.length < 6) { showToast('密码至少6位', 'err'); return; }
+  const password = fd.get('password')?.toString() || '';
+  if (password) payload.password = password;
+  if (!payload.displayName) { showToast('请填写显示名称', 'err'); return; }
+  if (!id && !payload.username) { showToast('请填写登录账号', 'err'); return; }
+  if (!id && !password) { showToast('请填写初始密码', 'err'); return; }
+  if (password && password.length < 6) { showToast('密码至少6位', 'err'); return; }
 
   try {
-    await api('/api/staff-mgmt/create', { method: 'POST', body: JSON.stringify(payload) });
-    showToast('员工账号已创建');
-    $('#staff-modal').style.display = 'none';
+    if (id) {
+      delete payload.username;
+      if (Number(id) === Number(state.currentUser?.id)) delete payload.role;
+      await api(`/api/staff-mgmt/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      showToast('员工信息已更新');
+    } else {
+      await api('/api/staff-mgmt/create', { method: 'POST', body: JSON.stringify(payload) });
+      showToast('员工账号已创建');
+    }
+    closeStaffAccountModal();
     form.reset();
     await refresh();
   } catch (e) { showToast(e.message, 'err'); }
@@ -3138,7 +3244,7 @@ async function onToggleStaffRole(userId, currentRole) {
   const newRole = currentRole === 'admin' ? 'staff' : 'admin';
   try {
     await api(`/api/staff-mgmt/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: newRole }) });
-    showToast(`角色已切换为 ${newRole==='admin'?'管理员':'员工'}`);
+    showToast(`权限已切换为 ${newRole==='admin'?'店长':'员工'}`);
     await refresh();
   } catch (e) { showToast(e.message, 'err'); }
 }

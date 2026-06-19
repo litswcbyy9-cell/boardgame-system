@@ -27,6 +27,7 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SENSITIVE_KEYS = new Set(['password', 'token', 'authorization', 'password_hash', 'passwordHash']);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let expiringReservations = false;
+let autoClosingSessions = false;
 
 function corsOptions() {
   const originList = String(process.env.CORS_ORIGIN || '')
@@ -250,6 +251,127 @@ async function expireOverdueReservations({ silent = false } = {}) {
     conn.release();
     expiringReservations = false;
   }
+}
+
+async function autoCloseOverdueSessions({ silent = false } = {}) {
+  if (autoClosingSessions) return 0;
+  autoClosingSessions = true;
+  const conn = await pool.getConnection();
+  try {
+    await conn.query(
+      `CREATE TEMPORARY TABLE IF NOT EXISTS tmp_auto_closed_sessions (
+        session_id INT UNSIGNED NOT NULL,
+        table_id INT UNSIGNED NOT NULL,
+        PRIMARY KEY (session_id),
+        KEY ix_tmp_auto_closed_table (table_id)
+      ) ENGINE=MEMORY`
+    );
+    await conn.query('TRUNCATE TABLE tmp_auto_closed_sessions');
+    await conn.query(
+      `INSERT IGNORE INTO tmp_auto_closed_sessions (session_id, table_id)
+       SELECT s.id, s.table_id
+       FROM play_sessions s
+       INNER JOIN reservations r ON r.id = s.reservation_id
+       WHERE s.ended_at IS NULL
+         AND r.status = 'active'
+         AND r.reserved_end <= NOW()`
+    );
+    const [[countRow]] = await conn.query('SELECT COUNT(*) AS closedCount FROM tmp_auto_closed_sessions');
+    const closedCount = Number(countRow?.closedCount || 0);
+    if (closedCount > 0) {
+      await conn.beginTransaction();
+      await conn.query(
+        `UPDATE play_sessions s
+         INNER JOIN tmp_auto_closed_sessions tmp ON tmp.session_id = s.id
+         SET
+           s.ended_at = NOW(),
+           s.billed_minutes = GREATEST(1, TIMESTAMPDIFF(MINUTE, s.started_at, NOW())),
+           s.amount_cents = IFNULL(s.amount_cents, 0),
+           s.notes = CASE
+             WHEN s.notes IS NULL OR s.notes = '' THEN '[系统] 预约时间结束自动关台'
+             WHEN s.notes LIKE '%[系统] 预约时间结束自动关台%' THEN s.notes
+             ELSE CONCAT(s.notes, CHAR(10), '[系统] 预约时间结束自动关台')
+           END`
+      );
+      await conn.query(
+        `UPDATE reservations r
+         INNER JOIN play_sessions s ON s.reservation_id = r.id
+         INNER JOIN tmp_auto_closed_sessions tmp ON tmp.session_id = s.id
+         SET r.status = 'completed'
+         WHERE r.status = 'active'`
+      );
+      await conn.query(
+        `UPDATE game_table_state gts
+         INNER JOIN (SELECT DISTINCT table_id FROM tmp_auto_closed_sessions) affected ON affected.table_id = gts.table_id
+         LEFT JOIN (
+           SELECT id, table_id
+           FROM (
+             SELECT
+               r.id,
+               r.table_id,
+               ROW_NUMBER() OVER (PARTITION BY r.table_id ORDER BY r.reserved_start ASC, r.id ASC) AS rn
+             FROM reservations r
+             WHERE r.status = 'pending'
+           ) ranked
+           WHERE rn = 1
+         ) nxt ON nxt.table_id = gts.table_id
+         SET
+           gts.status = IF(nxt.id IS NULL, 'idle', 'reserved'),
+           gts.current_session_id = NULL,
+           gts.current_reservation_id = nxt.id`
+      );
+      await conn.commit();
+      console.log(`[INFO] auto-closed ${closedCount} sessions after reserved end`);
+    }
+    await conn.query('DROP TEMPORARY TABLE IF EXISTS tmp_auto_closed_sessions');
+    return closedCount;
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    if (!silent) throw error;
+    console.error('[WARN] auto-close overdue sessions failed:', error.message);
+    return 0;
+  } finally {
+    conn.release();
+    autoClosingSessions = false;
+  }
+}
+
+async function getUpcomingSessionWarnings() {
+  const [rows] = await pool.query(
+    `SELECT s.id, t.code AS tableCode, r.reserved_end AS reservedEnd,
+            COALESCE(p.display_name, s.guest_name, r.guest_name, '现场客人') AS guestName,
+            TIMESTAMPDIFF(MINUTE, NOW(), r.reserved_end) AS minutesLeft
+     FROM play_sessions s
+     INNER JOIN reservations r ON r.id = s.reservation_id
+     INNER JOIN game_tables t ON t.id = s.table_id
+     LEFT JOIN players p ON p.id = r.player_id
+     WHERE s.ended_at IS NULL
+       AND r.status = 'active'
+       AND r.reserved_end > NOW()
+       AND r.reserved_end <= DATE_ADD(NOW(), INTERVAL 15 MINUTE)
+     ORDER BY r.reserved_end ASC
+     LIMIT 12`
+  );
+  return rows;
+}
+
+async function runOperationalMaintenance({ silent = false } = {}) {
+  const expiredReservations = await expireOverdueReservations({ silent });
+  const autoClosedSessions = await autoCloseOverdueSessions({ silent });
+  let dueSoonSessions = [];
+  try {
+    dueSoonSessions = await getUpcomingSessionWarnings();
+  } catch (error) {
+    if (!silent) throw error;
+    console.error('[WARN] upcoming session warnings failed:', error.message);
+  }
+  return {
+    expiredReservations,
+    autoClosedSessions,
+    dueSoonSessions,
+    reservationGraceMinutes: RESERVATION_GRACE_MINUTES,
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 async function callSettle(sessionId, billedMinutes, amountCents, notes) {
@@ -770,9 +892,14 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+app.post('/api/ops/maintenance', requireAuth, async (_req, res) => {
+  const result = await runOperationalMaintenance({ silent: true });
+  res.json(result);
+});
+
 /** 平面图：视图 v_table_status_floor */
 app.get('/api/tables', async (_req, res) => {
-  await expireOverdueReservations({ silent: true });
+  await runOperationalMaintenance({ silent: true });
   const [rows] = await pool.query(
     `SELECT f.table_id AS id, f.code, f.venue_id AS venueId, f.pos_x AS posX, f.pos_y AS posY, f.sort_order AS sortOrder,
             f.seat_capacity AS seatCapacity, f.area_type AS areaType, f.floor_photo_url AS floorPhotoUrl,
@@ -792,6 +919,7 @@ app.get('/api/tables', async (_req, res) => {
             s.guest_phone AS currentSessionGuestPhone,
             s.party_size AS currentSessionPartySize,
             s.started_at AS currentSessionStartedAt,
+            sr.reserved_end AS currentSessionReservedEnd,
             sr.player_id AS currentSessionPlayerId,
             sp.display_name AS currentSessionPlayerName,
             sp.phone AS currentSessionPlayerPhone
@@ -1131,7 +1259,7 @@ app.get('/api/reports/table-utilization', async (req, res) => {
 });
 
 app.get('/api/reservations', async (_req, res) => {
-  await expireOverdueReservations({ silent: true });
+  await runOperationalMaintenance({ silent: true });
   const [rows] = await pool.query(
     `SELECT r.id, r.table_id AS tableId, t.code AS tableCode, r.player_id AS playerId,
             p.display_name AS playerName, p.phone AS playerPhone,
@@ -1147,11 +1275,12 @@ app.get('/api/reservations', async (_req, res) => {
 });
 
 app.get('/api/sessions/open', async (_req, res) => {
-  await expireOverdueReservations({ silent: true });
+  await runOperationalMaintenance({ silent: true });
   const [rows] = await pool.query(
     `SELECT s.id, s.table_id AS tableId, t.code AS tableCode, s.reservation_id AS reservationId,
             s.guest_name AS guestName, s.guest_phone AS guestPhone, s.party_size AS partySize,
             s.started_at AS startedAt, s.ended_at AS endedAt,
+            r.reserved_end AS reservedEnd,
             r.player_id AS playerId, p.display_name AS playerName, p.phone AS playerPhone
      FROM play_sessions s
      INNER JOIN game_tables t ON t.id = s.table_id
@@ -1611,6 +1740,7 @@ app.post('/api/staff-mgmt/create', requireTenantAdmin, async (req, res) => {
     const tid = tenantId(req);
     const { username, displayName, password, role, fullName, phone, position } = req.body||{};
     if (!username||!displayName||!password) return sendError(res, 400, 'missing');
+    const normalizedRole = role === 'admin' ? 'admin' : 'staff';
     const passwordHash = await hashPassword(password);
     const [[existing]] = await pool.query('SELECT id FROM app_users WHERE tenant_id=? AND username=?', [tid, username]);
     if (existing) return sendError(res, 409, 'duplicate');
@@ -1624,7 +1754,7 @@ app.post('/api/staff-mgmt/create', requireTenantAdmin, async (req, res) => {
 
     const [userR] = await pool.query(
       `INSERT INTO app_users (tenant_id, staff_id, username, display_name, password_hash, role) VALUES (?,?,?,?,?,?)`,
-      [tid, staffId, username, displayName, passwordHash, role||'staff']);
+      [tid, staffId, username, displayName, passwordHash, normalizedRole]);
     res.status(201).json({ id: userR.insertId, employeeNo: empNo });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
@@ -1633,26 +1763,56 @@ app.patch('/api/staff-mgmt/:id', requireTenantAdmin, async (req, res) => {
   try {
     const tid = tenantId(req);
     const userId = Number(req.params.id);
-    // 禁止修改自己
-    if (req.user && req.user.id === userId) {
+    const { role, status, displayName, fullName, phone, position, password } = req.body||{};
+    const [[target]] = await pool.query(
+      `SELECT u.id, u.username, u.role, u.status, u.staff_id AS staffId
+       FROM app_users u
+       WHERE u.id=? AND u.tenant_id=?`,
+      [userId, tid]
+    );
+    if (!target) return sendError(res, 404, 'not_found');
+
+    const changingRoleOrStatus = role !== undefined || status !== undefined;
+    if (changingRoleOrStatus && req.user && req.user.id === userId) {
       return sendError(res, 403, 'cannot_modify_self');
     }
-    const { role, status } = req.body||{};
-    // 如果要把管理员降为员工，检查是否还有其他启用的管理员
-    if (role === 'staff' && req.body.role === 'staff') {
-      const [[target]] = await pool.query('SELECT role FROM app_users WHERE id=? AND tenant_id=?', [userId, tid]);
-      if (target && target.role === 'admin') {
-        const [[{cnt}]] = await pool.query(
-          `SELECT COUNT(*) as cnt FROM app_users WHERE tenant_id=? AND role='admin' AND status='active' AND id!=?`, [tid, userId]);
-        if (cnt === 0) return sendError(res, 409, 'last_admin');
-      }
+
+    const nextRole = role === undefined ? target.role : (role === 'admin' ? 'admin' : 'staff');
+    const nextStatus = status === undefined ? target.status : (status === 'disabled' ? 'disabled' : 'active');
+    const willLoseActiveManager = target.role === 'admin' && (nextRole !== 'admin' || nextStatus !== 'active');
+    if (willLoseActiveManager) {
+      const [[{cnt}]] = await pool.query(
+        `SELECT COUNT(*) as cnt FROM app_users WHERE tenant_id=? AND role='admin' AND status='active' AND id!=?`,
+        [tid, userId]
+      );
+      if (cnt === 0) return sendError(res, 409, 'last_admin');
     }
+
     const updates = [], params = [];
-    if (role) { updates.push('role=?'); params.push(role); }
-    if (status) { updates.push('status=?'); params.push(status); }
-    if (!updates.length) return sendError(res, 400, 'no_fields');
-    params.push(userId, tid);
-    await pool.query(`UPDATE app_users SET ${updates.join(',')} WHERE id=? AND tenant_id=?`, params);
+    if (role !== undefined) { updates.push('role=?'); params.push(nextRole); }
+    if (status !== undefined) { updates.push('status=?'); params.push(nextStatus); }
+    if (displayName !== undefined) { updates.push('display_name=?'); params.push(String(displayName).trim() || target.username); }
+    if (password !== undefined && String(password).trim()) {
+      if (String(password).length < 6) return sendError(res, 400, 'password_too_short');
+      updates.push('password_hash=?');
+      params.push(await hashPassword(String(password)));
+    }
+    if (updates.length) {
+      params.push(userId, tid);
+      await pool.query(`UPDATE app_users SET ${updates.join(',')} WHERE id=? AND tenant_id=?`, params);
+    }
+
+    const staffUpdates = [], staffParams = [];
+    if (fullName !== undefined) { staffUpdates.push('full_name=?'); staffParams.push(String(fullName).trim() || String(displayName || '').trim() || '未命名员工'); }
+    if (phone !== undefined) { staffUpdates.push('phone=?'); staffParams.push(String(phone).trim() || null); }
+    if (position !== undefined) { staffUpdates.push('position=?'); staffParams.push(String(position).trim() || '店员'); }
+    if (status !== undefined) { staffUpdates.push('status=?'); staffParams.push(nextStatus); }
+    if (staffUpdates.length && target.staffId) {
+      staffParams.push(target.staffId);
+      await pool.query(`UPDATE staff_profiles SET ${staffUpdates.join(',')} WHERE id=?`, staffParams);
+    }
+
+    if (!updates.length && !staffUpdates.length) return sendError(res, 400, 'no_fields');
     res.json({ ok: true });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
@@ -2007,30 +2167,146 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
   if (!question) return sendError(res, 400, 'missing_fields');
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const maintenance = await runOperationalMaintenance({ silent: true });
+    const queryRows = async (sql, params = []) => {
+      try {
+        const [rows] = await pool.query(sql, params);
+        return rows;
+      } catch (error) {
+        console.error('[WARN] ai context query failed:', error.message);
+        return [];
+      }
+    };
+    const queryOne = async (sql, params = []) => {
+      const rows = await queryRows(sql, params);
+      return rows[0] || {};
+    };
     const [[revenue]] = await pool.query('CALL sp_report_daily_revenue(?)', [today]).then((r) => r[0]).catch(() => [[{}]]);
     const [popularity] = await pool.query('CALL sp_report_game_popularity(?)', [30]).then((r) => [r[0]]).catch(() => [[]]);
     const [tableUtil] = await pool.query('CALL sp_report_table_utilization(?)', [30]).then((r) => [r[0]]).catch(() => [[]]);
-    const [[tableState]] = await pool.query(
+    const tableState = await queryOne(
       `SELECT SUM(status='idle') AS idle, SUM(status='reserved') AS reserved, SUM(status='occupied') AS occupied FROM game_table_state`
     );
-    const [[memberCount]] = await pool.query("SELECT COUNT(*) AS total FROM players WHERE status='active'");
-    const [games] = await pool.query(
+    const memberStats = await queryOne(
+      `SELECT COUNT(*) AS total,
+              SUM(balance_cents) AS totalBalanceCents,
+              SUM(points) AS totalPoints,
+              SUM(total_spent_cents) AS totalSpentCents
+       FROM players WHERE status='active'`
+    );
+    const staffStats = await queryOne(
+      `SELECT COUNT(*) AS total,
+              SUM(role='admin' AND status='active') AS managers,
+              SUM(role='staff' AND status='active') AS staff,
+              SUM(status='disabled') AS disabled
+       FROM app_users`
+    );
+    const orderStats = await queryOne(
+      `SELECT COUNT(*) AS todayOrders,
+              SUM(final_cents) AS todayOrderRevenueCents,
+              SUM(discount_cents) AS todayDiscountCents
+       FROM orders
+       WHERE status='paid' AND DATE(created_at)=CURDATE()`
+    );
+    const rentalStats = await queryOne(
+      `SELECT
+         (SELECT COUNT(*) FROM game_copies) AS totalCopies,
+         (SELECT COUNT(*) FROM game_copies WHERE status='available') AS availableCopies,
+         (SELECT COUNT(*) FROM game_loans WHERE status='active') AS activeLoans,
+         (SELECT COUNT(*) FROM game_loans WHERE status='active' AND due_at < NOW()) AS overdueLoans`
+    );
+    const openSessions = await queryRows(
+      `SELECT s.id, t.code AS tableCode, s.started_at AS startedAt, r.reserved_end AS reservedEnd,
+              COALESCE(p.display_name, s.guest_name, r.guest_name, '现场客人') AS guestName,
+              s.party_size AS partySize,
+              TIMESTAMPDIFF(MINUTE, s.started_at, NOW()) AS runningMinutes
+       FROM play_sessions s
+       INNER JOIN game_tables t ON t.id=s.table_id
+       LEFT JOIN reservations r ON r.id=s.reservation_id
+       LEFT JOIN players p ON p.id=r.player_id
+       WHERE s.ended_at IS NULL
+       ORDER BY s.started_at ASC
+       LIMIT 12`
+    );
+    const upcomingReservations = await queryRows(
+      `SELECT r.id, t.code AS tableCode, COALESCE(p.display_name, r.guest_name, '访客') AS guestName,
+              r.party_size AS partySize, r.reserved_start AS reservedStart, r.reserved_end AS reservedEnd
+       FROM reservations r
+       INNER JOIN game_tables t ON t.id=r.table_id
+       LEFT JOIN players p ON p.id=r.player_id
+       WHERE r.status='pending'
+       ORDER BY r.reserved_start ASC
+       LIMIT 12`
+    );
+    const topMembers = await queryRows(
+      `SELECT display_name AS name, membershipLevel, points, total_spent_cents AS spentCents
+       FROM players
+       WHERE status='active'
+       ORDER BY total_spent_cents DESC, points DESC
+       LIMIT 8`
+    );
+    const games = await queryRows(
       `SELECT title, category, min_players AS minP, max_players AS maxP, avg_minutes AS mins, difficulty_level AS diff
        FROM games ORDER BY recommend_weight DESC LIMIT 40`
     );
 
     const context = {
       日期: today,
+      自动维护: {
+        未到店预约数: maintenance.expiredReservations,
+        自动关台数: maintenance.autoClosedSessions,
+        即将结束对局: maintenance.dueSoonSessions,
+        检查时间: maintenance.checkedAt,
+      },
       今日收入元: revenue?.revenue_yuan ?? revenue?.total_revenue_yuan ?? 0,
       今日结算单数: revenue?.settled_sessions ?? 0,
       桌位状态: { 空闲: Number(tableState?.idle) || 0, 预约: Number(tableState?.reserved) || 0, 占用: Number(tableState?.occupied) || 0 },
-      活跃会员数: Number(memberCount?.total) || 0,
+      订单流水: {
+        今日订单数: Number(orderStats.todayOrders) || 0,
+        今日订单收入元: Number(orderStats.todayOrderRevenueCents || 0) / 100,
+        今日优惠元: Number(orderStats.todayDiscountCents || 0) / 100,
+      },
+      会员概况: {
+        活跃会员数: Number(memberStats?.total) || 0,
+        储值余额元: Number(memberStats?.totalBalanceCents || 0) / 100,
+        总积分: Number(memberStats?.totalPoints) || 0,
+        累计消费元: Number(memberStats?.totalSpentCents || 0) / 100,
+        高消费会员: topMembers.map((m) => ({ 姓名: m.name, 等级: m.membershipLevel, 积分: m.points, 累计消费元: Number(m.spentCents || 0) / 100 })),
+      },
+      员工权限: {
+        总账号: Number(staffStats.total) || 0,
+        店长: Number(staffStats.managers) || 0,
+        员工: Number(staffStats.staff) || 0,
+        停用: Number(staffStats.disabled) || 0,
+      },
+      租借服务: {
+        总副本: Number(rentalStats.totalCopies) || 0,
+        可借副本: Number(rentalStats.availableCopies) || 0,
+        借出中: Number(rentalStats.activeLoans) || 0,
+        逾期未还: Number(rentalStats.overdueLoans) || 0,
+      },
+      进行中对局: openSessions.map((s) => ({
+        session: s.id,
+        桌位: s.tableCode,
+        客人: s.guestName,
+        人数: s.partySize,
+        已进行分钟: s.runningMinutes,
+        预约结束: s.reservedEnd,
+      })),
+      待入场预约: upcomingReservations.map((r) => ({
+        预约: r.id,
+        桌位: r.tableCode,
+        客人: r.guestName,
+        人数: r.partySize,
+        开始: r.reservedStart,
+        结束: r.reservedEnd,
+      })),
       热门桌游TOP5: (popularity || []).slice(0, 5).map((p) => ({ 名称: p.title || p.game_title, 局数: p.record_count ?? p.play_count })),
       热门桌位TOP5: (tableUtil || []).slice(0, 5).map((t) => ({ 桌位: t.code, 场次: t.settled_sessions_in_range ?? t.sessions })),
       桌游目录: games.map((g) => ({ 名称: g.title, 分类: g.category, 人数: `${g.minP}-${g.maxP}`, 时长分钟: g.mins, 难度: g.diff })),
     };
     const { content, mock } = await callLLM([
-      { role: 'system', content: '你是桌游馆运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
+      { role: 'system', content: '你是桌游馆常驻运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；如果发现即将结束、逾期、自动关台、租借逾期等风险，要主动点出来并给出下一步操作。桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
       { role: 'user', content: `数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
     ], { temperature: 0.4, maxTokens: 2500 });
     res.json({ answer: content.trim(), data: context, mock });
@@ -2084,9 +2360,9 @@ if (process.env.SERVE_WEB === '1') {
 const port = Number(process.env.PORT || 9898);
 const server = app.listen(port, () => {
   console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${port}`);
-  void expireOverdueReservations({ silent: true });
+  void runOperationalMaintenance({ silent: true });
   setInterval(() => {
-    void expireOverdueReservations({ silent: true });
+    void runOperationalMaintenance({ silent: true });
   }, 60_000).unref();
 });
 
