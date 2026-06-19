@@ -293,6 +293,7 @@ const state = {
   customerSelectedTableId: '',
   customerMatches: [],
   customerResult: null,
+  customerCatalogExpanded: false,
   rentalTab: 'active',
   rentalLoanGameId: '',
   rentalLoanCopyId: '',
@@ -1712,25 +1713,34 @@ function renderCustomerGameCatalog(games) {
   if (!games.length) {
     return '<div class="rounded-3xl border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/55">暂无公开桌游。请在后台“桌游目录”添加或检查生产数据库数据。</div>';
   }
+  const expanded = Boolean(state.customerCatalogExpanded);
+  const visibleGames = expanded ? games : games.slice(0, 6);
   return `
-    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-      ${games.slice(0, 12).map((g) => `
-        <article class="card bg-base-100 shadow-md rounded-3xl overflow-hidden border border-base-300/50 transition-all hover:-translate-y-1 hover:shadow-xl">
-          <figure class="aspect-[4/3] overflow-hidden bg-base-300">
-            ${renderGameCover(g, 'w-full h-full object-cover')}
-          </figure>
-          <div class="card-body p-4 gap-2">
-            <h4 class="font-bold text-base leading-tight">${escapeHtml(g.title)}</h4>
-            <div class="flex flex-wrap gap-1.5">
-              <span class="badge badge-sm badge-primary badge-outline rounded-full">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
-              <span class="badge badge-sm badge-secondary badge-outline rounded-full">${g.avg_minutes || g.avgMinutes || 90}分钟</span>
-              <span class="badge badge-sm badge-ghost rounded-full">${customerDifficulty(g)}</span>
-              <span class="badge badge-sm badge-ghost rounded-full">热度 ${Number(g.hotScore || 0).toFixed(0)}</span>
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+        ${visibleGames.map((g) => `
+          <article class="card bg-base-100 shadow-md rounded-3xl overflow-hidden border border-base-300/50 transition-all hover:-translate-y-1 hover:shadow-xl">
+            <figure class="aspect-[4/3] overflow-hidden bg-base-300">
+              ${renderGameCover(g, 'w-full h-full object-cover')}
+            </figure>
+            <div class="card-body p-4 gap-2">
+              <h4 class="font-bold text-base leading-tight">${escapeHtml(g.title)}</h4>
+              <div class="flex flex-wrap gap-1.5">
+                <span class="badge badge-sm badge-primary badge-outline rounded-full">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
+                <span class="badge badge-sm badge-secondary badge-outline rounded-full">${g.avg_minutes || g.avgMinutes || 90}分钟</span>
+                <span class="badge badge-sm badge-ghost rounded-full">${customerDifficulty(g)}</span>
+                <span class="badge badge-sm badge-ghost rounded-full">热度 ${Number(g.hotScore || 0).toFixed(0)}</span>
+              </div>
+              <p class="m-0 text-xs text-base-content/50">近30天 ${g.recentPlayCount || 0} 次 · 总计 ${g.playCount || 0} 次</p>
+              ${g.description ? `<p class="text-sm text-base-content/60 line-clamp-3">${escapeHtml(g.description)}</p>` : ''}
             </div>
-            <p class="m-0 text-xs text-base-content/50">近30天 ${g.recentPlayCount || 0} 次 · 总计 ${g.playCount || 0} 次</p>
-            ${g.description ? `<p class="text-sm text-base-content/60 line-clamp-3">${escapeHtml(g.description)}</p>` : ''}
-          </div>
-        </article>`).join('')}
+          </article>`).join('')}
+      </div>
+      ${games.length > 6 ? `
+        <button class="btn btn-outline btn-primary w-full rounded-2xl" data-customer-catalog-toggle type="button">
+          ${expanded ? '收起桌游目录' : `展开全部 ${games.length} 款桌游`}
+        </button>
+      ` : ''}
     </div>`;
 }
 
@@ -1931,7 +1941,7 @@ function renderCustomerBookingPage() {
     </section>
 
     <div class="max-w-7xl mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-[390px_minmax(0,1fr)] gap-8 items-start">
-      <aside class="space-y-5 lg:sticky lg:top-20">
+      <aside class="space-y-5 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
         ${renderCustomerAccountPanel()}
         <section class="card bg-base-100 shadow-xl rounded-3xl border border-base-300/60">
         <div class="card-body p-6 gap-3">
@@ -2770,6 +2780,10 @@ function bind() {
     })
   );
   root.querySelector('[data-customer-submit]')?.addEventListener('click', () => void onCustomerSubmit());
+  root.querySelector('[data-customer-catalog-toggle]')?.addEventListener('click', () => {
+    state.customerCatalogExpanded = !state.customerCatalogExpanded;
+    render();
+  });
   root.querySelectorAll('[data-customer-auth-mode]').forEach((button) =>
     button.addEventListener('click', () => {
       const shouldScroll = button.hasAttribute('data-customer-auth-scroll');

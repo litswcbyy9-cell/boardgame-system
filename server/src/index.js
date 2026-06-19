@@ -1055,7 +1055,10 @@ app.get('/api/players', async (_req, res) => {
             total_spent_cents AS totalSpentCents, status
      FROM players
      WHERE status = 'active'
-     ORDER BY id LIMIT 800`
+       AND member_no IS NOT NULL AND member_no <> ''
+       AND phone IS NOT NULL AND phone <> ''
+     ORDER BY id DESC
+     LIMIT 10`
   );
   res.json(rows);
 });
@@ -1066,6 +1069,8 @@ app.get('/api/members', async (req, res) => {
   const where = [];
   const params = [];
   let orderBy = 'status ASC, id DESC';
+
+  where.push("member_no IS NOT NULL AND member_no <> '' AND phone IS NOT NULL AND phone <> ''");
 
   if (q) {
     // 姓名走全文检索（相关度），手机号/会员号走 LIKE 精确匹配
@@ -1088,7 +1093,7 @@ app.get('/api/members', async (req, res) => {
      FROM players
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY ${orderBy}
-     LIMIT 300`,
+     LIMIT 10`,
     params
   );
   res.json(rows);
@@ -1124,6 +1129,9 @@ app.post('/api/members', requireAuth, async (req, res) => {
 
   if (!displayName) {
     return sendError(res, 400, 'missing_display_name');
+  }
+  if (!phone) {
+    return sendError(res, 400, 'invalid_phone');
   }
 
   const conn = await pool.getConnection();
@@ -1689,6 +1697,8 @@ app.get('/api/members-mgmt/stats', requireAuth, async (req, res) => {
         SUM(total_spent_cents) as totalSpent,
         SUM(points) as totalPoints
       FROM players WHERE tenant_id = ?
+        AND member_no IS NOT NULL AND member_no <> ''
+        AND phone IS NOT NULL AND phone <> ''
     `, [tid]);
     res.json({
       totalMembers: result?.totalMembers || 0,
@@ -1703,12 +1713,14 @@ app.get('/api/members-mgmt/stats', requireAuth, async (req, res) => {
 app.get('/api/members-mgmt/list', requireAuth, async (req, res) => {
   try {
     const tid = tenantId(req);
-    const skip = Number(req.query.skip)||0, take = Number(req.query.take)||20;
+    const skip = Number(req.query.skip)||0, take = Math.min(10, Number(req.query.take)||10);
     const [rows] = await pool.query(
       `SELECT id, member_no AS memberNo, display_name AS displayName, phone,
               membershipLevel, points, total_spent_cents AS totalSpentCents,
               balance_cents AS balanceCents, created_at AS createdAt
-       FROM players WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+       FROM players WHERE tenant_id = ?
+        AND member_no IS NOT NULL AND member_no <> ''
+        AND phone IS NOT NULL AND phone <> '' ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [tid, take, skip]);
     res.json({ data: rows });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
