@@ -2010,7 +2010,7 @@ function renderCustomerBookingPage() {
           <div class="flex items-baseline justify-between gap-4 mb-4">
             <div>
               <h3 class="m-0 text-2xl font-bold tracking-tight">桌游目录</h3>
-              <p class="m-0 mt-1 text-sm text-base-content/55">不知道玩什么，可以直接问右下角 AI 客服。</p>
+              <p class="m-0 mt-1 text-sm text-base-content/55">不知道玩什么，或想看当前空桌，可以问右下角 AI 客服。</p>
             </div>
             <span class="shrink-0 text-sm text-base-content/50">${games.length} 款</span>
           </div>
@@ -2047,7 +2047,7 @@ function renderCustomerChatWidget() {
   const messages = state.custChatMessages || [];
   const bubbles = messages.length
     ? messages.map((m) => `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div></div>`).join('')
-    : '<div class="cust-chat-hello">你好！我是 AI 客服，可以帮你推荐桌游或解答预约问题 🎲</div>';
+    : '<div class="cust-chat-hello">你好！我是 AI 客服，可以推荐桌游、查询当前空桌；预约需要你在页面表单里亲自提交 🎲</div>';
   return `
     <div class="cust-chat ${open ? 'is-open' : ''}">
       ${open ? `
@@ -2058,7 +2058,7 @@ function renderCustomerChatWidget() {
             ${state.custChatLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing"><span class="loading loading-dots loading-sm"></span> 输入中</div></div>' : ''}
           </div>
           <div class="cust-chat-input">
-            <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问问想玩什么…" value="${escapeAttr(state.custChatInput || '')}" />
+            <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问桌游推荐 / 当前空桌…" value="${escapeAttr(state.custChatInput || '')}" />
             <button class="btn btn-primary btn-sm" id="btn-cust-chat-send" type="button" ${state.custChatLoading ? 'disabled' : ''}>发送</button>
           </div>
         </div>` : ''}

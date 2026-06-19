@@ -2374,7 +2374,7 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
       桌游目录: games.map((g) => ({ 名称: g.title, 分类: g.category, 人数: `${g.minP}-${g.maxP}`, 时长分钟: g.mins, 难度: g.diff })),
     };
     const { content, mock } = await callLLM([
-      { role: 'system', content: '你是桌游馆常驻运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；如果发现即将结束、逾期、自动关台、租借逾期等风险，要主动点出来并给出下一步操作。桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
+      { role: 'system', content: '你是桌游馆常驻运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；你不能代替店员创建预约、结算、取消或修改任何数据，只能给出建议并引导店员到对应页面操作；如果发现即将结束、超时占用、租借逾期等风险，要主动点出来并给出下一步操作。桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
       { role: 'user', content: `数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
     ], { temperature: 0.4, maxTokens: 2500 });
     res.json({ answer: content.trim(), data: context, mock });
@@ -2384,7 +2384,39 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
   }
 });
 
-// 顾客 AI 客服（公开端点）：只答桌游/预约相关，附带桌游目录
+function tableAreaText(areaType) {
+  return {
+    standard: '标准区',
+    party: '聚会区',
+    private: '包间',
+    quiet: '安静区',
+  }[areaType] || areaType || '标准区';
+}
+
+function publicTableAvailabilityReply(tables) {
+  const idle = tables.filter((table) => table.status === 'idle');
+  const reserved = tables.filter((table) => table.status === 'reserved').length;
+  const occupied = tables.filter((table) => table.status === 'occupied').length;
+  if (!idle.length) {
+    return `当前没有空闲桌位。已有 ${reserved} 张预留桌、${occupied} 张占用桌。未来时段请在页面预约表单里选择人数和到离店时间后查询。`;
+  }
+  const list = idle
+    .slice(0, 8)
+    .map((table) => `${table.code}（${table.seatCapacity}人，${tableAreaText(table.areaType)}）`)
+    .join('、');
+  const more = idle.length > 8 ? `，另有 ${idle.length - 8} 张空桌` : '';
+  return `当前空闲桌位有 ${idle.length} 张：${list}${more}。这只代表此刻状态；如果要预约未来时段，请在页面左侧填写人数、到店和离店时间，再点击“查找可用桌位”。`;
+}
+
+function isBookingActionIntent(message) {
+  return /(帮|替|给我|麻烦|能不能).*(预约|预订|订桌|定桌|订位|定位|约桌)|(?:我要|我想|想要).*(预约|预订|订桌|定桌|订位|定位|约桌)|(预约|预订|订桌|定桌|订位|定张桌|约个桌).*(一下|吧|可以吗|吗)/.test(message);
+}
+
+function isCurrentAvailabilityIntent(message) {
+  return /(现在|当前|目前|此刻|今天).*(空桌|空位|空闲|有桌|桌位|座位)|(空桌|空位|空闲桌|还有桌|有没有桌|有位置|有座位)/.test(message);
+}
+
+// 顾客 AI 客服（公开端点）：只答桌游/预约相关，附带桌游目录和当前桌位状态
 app.post('/api/public/ai/chat', async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return sendError(res, 400, 'missing_fields');
@@ -2393,12 +2425,39 @@ app.post('/api/public/ai/chat', async (req, res) => {
       `SELECT title, category, min_players AS minP, max_players AS maxP, avg_minutes AS mins, difficulty_level AS diff
        FROM games ORDER BY recommend_weight DESC LIMIT 30`
     );
+    const [tables] = await pool.query(
+      `SELECT table_id AS tableId, code, seat_capacity AS seatCapacity, area_type AS areaType, status
+       FROM v_table_status_floor
+       ORDER BY status ASC, sort_order ASC, code ASC`
+    );
+    const availabilityReply = publicTableAvailabilityReply(tables);
+
+    if (isBookingActionIntent(message)) {
+      return res.json({
+        reply: `我不能直接替你提交预约，也不会帮你占座。${availabilityReply} 填好后由系统提交预约，成功后会显示预约编号。`,
+        mock: false,
+        data: { tables },
+      });
+    }
+
+    if (isCurrentAvailabilityIntent(message)) {
+      return res.json({ reply: availabilityReply, mock: false, data: { tables } });
+    }
+
     const catalog = games.map((g) => `${g.title}（${g.category}，${g.minP}-${g.maxP}人，${g.mins}分钟，难度${g.diff}/5）`).join('；');
+    const tableSummary = {
+      当前空桌: tables.filter((table) => table.status === 'idle').map((table) => ({ 桌号: table.code, 人数: table.seatCapacity, 区域: tableAreaText(table.areaType) })),
+      已预留: tables.filter((table) => table.status === 'reserved').map((table) => table.code),
+      占用中: tables.filter((table) => table.status === 'occupied').map((table) => table.code),
+    };
     const { content, mock } = await callLLM([
-      { role: 'system', content: `你是桌游馆的友好客服。只回答桌游推荐、预约、营业相关问题，其他话题礼貌婉拒。店内桌游目录：${catalog}。根据顾客需求推荐合适桌游，简洁热情，控制在 120 字内。` },
+      {
+        role: 'system',
+        content: `你是桌游馆的友好客服。只回答桌游推荐、预约流程、营业和当前桌位状态相关问题，其他话题礼貌婉拒。严格规则：1. 你没有权限替顾客创建、提交、修改、取消预约；2. 不得说“已帮你预约/已提交/已锁定/已保留桌位”；3. 顾客想预约时，引导其在页面左侧预约表单填写人数、到店时间、离店时间并点击查找/提交；4. 当前空桌只能依据“当前桌位状态”回答，未来时段可用性必须让顾客用预约表单查询；5. 不编造数据。店内桌游目录：${catalog}。当前桌位状态：${JSON.stringify(tableSummary)}。回答简洁热情，控制在 120 字内。`,
+      },
       { role: 'user', content: message },
-    ], { temperature: 0.7, maxTokens: 2000 });
-    res.json({ reply: content.trim(), mock });
+    ], { temperature: 0.3, maxTokens: 1600 });
+    res.json({ reply: content.trim(), mock, data: { tables } });
   } catch (e) {
     console.error('[ERROR] ai chat:', e);
     sendError(res, 502, 'llm_error', String(e.message));
