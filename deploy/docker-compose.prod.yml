@@ -8,6 +8,7 @@ services:
     container_name: boardgame-mysql
     restart: always
     environment:
+      TZ: Asia/Shanghai
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: boardgame
       MYSQL_USER: boardgame
@@ -28,11 +29,13 @@ services:
       dockerfile: deploy/Dockerfile.api
     restart: always
     environment:
+      TZ: Asia/Shanghai
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: boardgame
       DB_PASSWORD: ${MYSQL_PASSWORD}
       DB_NAME: boardgame
+      DB_TIMEZONE: '+08:00'
       PORT: 9898
       ALLOW_PUBLIC_REGISTER: 0
       # DeepSeek / OpenAI 兼容大模型

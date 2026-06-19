@@ -315,8 +315,19 @@ function addHours(d, h) {
 }
 
 function localInputToMysqlDatetime(dtLocal) {
-  const d = new Date(dtLocal);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+  const raw = String(dtLocal || '').trim();
+  if (!raw) return '';
+  const normalized = raw.replace('T', ' ');
+  return normalized.length === 16 ? `${normalized}:00` : normalized.slice(0, 19);
+}
+
+function parseAppDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const raw = String(value).trim();
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) ? raw.replace(' ', 'T') : raw;
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function escapeHtml(value) {
@@ -338,15 +349,15 @@ function yuan(cents) {
 
 function formatTime(value) {
   if (!value) return '未设置';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
+  const d = parseAppDate(value);
+  if (!d) return String(value);
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDateTime(value) {
   if (!value) return '未设置';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
+  const d = parseAppDate(value);
+  if (!d) return String(value);
   return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
@@ -355,8 +366,8 @@ function formatTimeRange(start, end) {
 }
 
 function formatDurationFrom(value) {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '进行中';
+  const d = parseAppDate(value);
+  if (!d) return '进行中';
   const minutes = Math.max(1, Math.round((Date.now() - d.getTime()) / 60000));
   if (minutes < 60) return `${minutes} 分钟`;
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
@@ -705,9 +716,9 @@ function sessionPartySize(session) {
 
 function sessionTiming(session) {
   if (!session?.reservedEnd) return { label: '计时中', tone: 'info', minutesLeft: null };
-  const end = new Date(session.reservedEnd).getTime();
-  if (!Number.isFinite(end)) return { label: '计时中', tone: 'info', minutesLeft: null };
-  const minutesLeft = Math.ceil((end - Date.now()) / 60000);
+  const end = parseAppDate(session.reservedEnd);
+  if (!end) return { label: '计时中', tone: 'info', minutesLeft: null };
+  const minutesLeft = Math.ceil((end.getTime() - Date.now()) / 60000);
   if (minutesLeft <= 0) return { label: '已超时', tone: 'warning', minutesLeft };
   if (minutesLeft <= 15) return { label: `${minutesLeft} 分钟后结束`, tone: 'warning', minutesLeft };
   return { label: '计时中', tone: 'info', minutesLeft };
@@ -718,7 +729,7 @@ function reservationsForTable(tableId) {
     .filter((reservation) => reservation.tableId === tableId && reservation.status === 'pending')
     .slice()
     .sort((a, b) => {
-      const timeDiff = new Date(a.reservedStart).getTime() - new Date(b.reservedStart).getTime();
+      const timeDiff = (parseAppDate(a.reservedStart)?.getTime() || 0) - (parseAppDate(b.reservedStart)?.getTime() || 0);
       return timeDiff || Number(a.id || 0) - Number(b.id || 0);
     });
 }
@@ -2702,7 +2713,9 @@ function normalizedPartySize(value) {
 }
 
 function hasInvalidTimeRange(startAt, endAt) {
-  return !startAt || !endAt || new Date(startAt) >= new Date(endAt);
+  const start = parseAppDate(startAt);
+  const end = parseAppDate(endAt);
+  return !start || !end || start >= end;
 }
 
 function assertTableCapacity(table, partySize) {

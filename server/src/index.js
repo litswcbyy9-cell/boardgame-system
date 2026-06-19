@@ -99,6 +99,8 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || 'boardgame',
   database: process.env.DB_NAME || 'boardgame',
   charset: 'utf8mb4',
+  timezone: process.env.DB_TIMEZONE || '+08:00',
+  dateStrings: true,
   waitForConnections: true,
   connectionLimit: 10,
 });
@@ -455,6 +457,13 @@ function toPositiveInt(value, fallback, max) {
 function toMysqlDatetime(date) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
+}
+
+function normalizeMysqlDatetimeInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.replace('T', ' ');
+  return normalized.length === 16 ? `${normalized}:00` : normalized.slice(0, 19);
 }
 
 function parseDateInput(value, fallback) {
@@ -1678,8 +1687,8 @@ app.post('/api/coupons-mgmt/create', requireAuth, async (req, res) => {
     const tid = tenantId(req);
     const { name, type, value, minAmount, totalQty, startAt, endAt, validOn } = req.body||{};
     if (!name||!type||!value||!totalQty||!startAt||!endAt) return sendError(res, 400, 'missing');
-    const start = new Date(startAt).toISOString().slice(0,19).replace('T',' ');
-    const end = new Date(endAt).toISOString().slice(0,19).replace('T',' ');
+    const start = normalizeMysqlDatetimeInput(startAt);
+    const end = normalizeMysqlDatetimeInput(endAt);
     const [r] = await pool.query(
       `INSERT INTO coupons (tenant_id,name,type,value,min_amount,total_qty,start_at,end_at,valid_on) VALUES (?,?,?,?,?,?,?,?,?)`,
       [tid,name,type,value,minAmount||0,totalQty,start,end,validOn||'all']);
