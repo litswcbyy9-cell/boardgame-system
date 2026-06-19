@@ -10,6 +10,14 @@ import { callLLM, llmInfo } from './llm.js';
 
 dotenv.config();
 
+// 兜底：任何未捕获的异步错误只记录日志，绝不让整个进程崩溃（导致全站 502）
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason instanceof Error ? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err.message);
+});
+
 const app = express();
 const scryptAsync = promisify(crypto.scrypt);
 const SESSION_DAYS = 7;
@@ -950,22 +958,27 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
 });
 
 app.get('/api/leaderboard', async (req, res) => {
-  const sortBy = req.query.sortBy === 'elo' ? 'elo' : 'winrate';
-  const orderClause =
-    sortBy === 'elo'
-      ? 'ps.elo_rating DESC, ps.wins DESC, ps.games DESC'
-      : '(CASE WHEN ps.games = 0 THEN 0 ELSE ps.wins / ps.games END) DESC, ps.wins DESC, ps.games DESC';
-  const [rows] = await pool.query(
-    `SELECT p.id AS playerId, p.display_name AS displayName, p.avatar_url AS avatarUrl,
-            ps.wins, ps.games, ps.losses, ps.elo_rating AS eloRating,
-            (CASE WHEN ps.games = 0 THEN 0 ELSE ROUND(ps.wins / ps.games, 4) END) AS winRate,
-            ps.last_win_at AS lastWinAt
-     FROM players p
-     INNER JOIN player_stats ps ON ps.player_id = p.id
-     ORDER BY ${orderClause}
-     LIMIT 50`
-  );
-  res.json(rows);
+  try {
+    const sortBy = req.query.sortBy === 'elo' ? 'elo' : 'winrate';
+    const orderClause =
+      sortBy === 'elo'
+        ? 'ps.elo_rating DESC, ps.wins DESC, ps.games DESC'
+        : '(CASE WHEN ps.games = 0 THEN 0 ELSE ps.wins / ps.games END) DESC, ps.wins DESC, ps.games DESC';
+    const [rows] = await pool.query(
+      `SELECT p.id AS playerId, p.display_name AS displayName, p.avatar_url AS avatarUrl,
+              ps.wins, ps.games, ps.losses, ps.elo_rating AS eloRating,
+              (CASE WHEN ps.games = 0 THEN 0 ELSE ROUND(ps.wins / ps.games, 4) END) AS winRate,
+              ps.last_win_at AS lastWinAt
+       FROM players p
+       INNER JOIN player_stats ps ON ps.player_id = p.id
+       ORDER BY ${orderClause}
+       LIMIT 50`
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('[ERROR] leaderboard:', error.message);
+    sendError(res, 500, 'database_error', error.message);
+  }
 });
 
 app.get('/api/venue', async (_req, res) => {
