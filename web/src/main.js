@@ -1,5 +1,6 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const AUTH_KEY = 'boardgame.auth.token';
+const PLAYER_AUTH_KEY = 'boardgame.player.token';
 const SIDEBAR_KEY = 'boardgame.sidebar.collapsed';
 const ALLOW_PUBLIC_REGISTER = import.meta.env.VITE_ALLOW_PUBLIC_REGISTER === '1';
 let refreshTimer = null;
@@ -45,11 +46,11 @@ const navItems = [
   },
   {
     id: 'sessions',
-    label: '对局战绩',
+    label: '对局状态',
     icon: 'workflow',
     eyebrow: 'Sessions',
-    title: '对局、结算与战绩',
-    description: '查看待处理预约、进行中对局和会员战绩排行。',
+    title: '预约与进行中对局',
+    description: '查看待处理预约、进行中对局和会员排行；战绩由顾客在自己的预约记录中提交。',
   },
   {
     id: 'reports',
@@ -229,6 +230,21 @@ const state = {
   petLoading: false,
   authToken: window.localStorage.getItem(AUTH_KEY) || '',
   currentUser: null,
+  customerToken: window.localStorage.getItem(PLAYER_AUTH_KEY) || '',
+  customerPlayer: null,
+  customerAuthMode: 'login',
+  customerLoginPhone: '',
+  customerLoginPassword: '',
+  customerRegisterName: '',
+  customerRegisterPhone: '',
+  customerRegisterPassword: '',
+  customerReservations: [],
+  customerReservationsLoading: false,
+  customerRecordReservationId: null,
+  customerRecordGameId: '',
+  customerRecordWinnerMode: 'self',
+  customerRecordWinnerName: '',
+  customerRecordScore: '',
   authMode: 'login',
   loginUsername: 'admin',
   loginPassword: '',
@@ -248,12 +264,6 @@ const state = {
   billedMin: 90,
   amountYuan: '48',
   settleNotes: '',
-  gameId: '1',
-  winnerId: '',
-  recordParticipants: [],
-  recordMode: 'single',
-  participantToAdd: '',
-  closedSessionId: '',
   memberSearch: '',
   staffSearch: '',
   gameSearch: '',
@@ -395,6 +405,8 @@ const clientErrorMessages = {
   unauthorized: '请先登录后再操作',
   forbidden: '当前账号没有执行该操作的权限',
   invalid_credentials: '账号或密码错误',
+  phone_registered: '该手机号已经注册，请直接登录',
+  invalid_phone: '手机号格式不正确',
   registration_disabled: '公开注册已关闭，请联系管理员创建员工账号',
   missing_fields: '缺少必填字段，请补全后再提交',
   invalid_guest_name: '访客名称不能为空',
@@ -411,7 +423,10 @@ const clientErrorMessages = {
   reservation_not_pending: '该预约不是待入场状态，不能入场',
   reservation_not_cancellable: '该预约已入场、取消或完成，不能再取消',
   session_not_open: '该对局不存在或已经结算，不能重复关台',
+  session_not_started: '该预约尚未入场，暂时不能填写战绩',
   session_still_open: '该对局仍在进行中，请先结算关台再录入战绩',
+  record_exists: '该预约已经提交过战绩',
+  recording_moved_to_customer: '后台战绩录入已关闭，请由顾客在自己的预约记录中提交',
   game_not_found: '选择的桌游不存在',
   missing_gameId: '请选择要录入的桌游',
   member_not_found: '会员不存在或已停用',
@@ -462,11 +477,49 @@ async function api(path, opts = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function customerApi(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.customerToken) headers.Authorization = `Bearer ${state.customerToken}`;
+  let response;
+  try {
+    response = await fetch(path, { ...opts, headers });
+  } catch {
+    throw new Error('无法连接后端服务，请稍后再试。');
+  }
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      const body = await response.json();
+      message = readableApiError(body, response.statusText);
+    } catch {
+      // keep status text
+    }
+    if (response.status === 401) {
+      setCustomerAuth('', null);
+    }
+    throw new Error(message);
+  }
+  if (response.status === 204) return null;
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
 function setAuth(token, user) {
   state.authToken = token || '';
   state.currentUser = user || null;
   if (state.authToken) window.localStorage.setItem(AUTH_KEY, state.authToken);
   else window.localStorage.removeItem(AUTH_KEY);
+}
+
+function setCustomerAuth(token, player) {
+  state.customerToken = token || '';
+  state.customerPlayer = player || null;
+  if (state.customerToken) window.localStorage.setItem(PLAYER_AUTH_KEY, state.customerToken);
+  else window.localStorage.removeItem(PLAYER_AUTH_KEY);
+  if (player) {
+    state.customerGuestName = player.displayName || state.customerGuestName;
+    state.customerPhone = player.phone || state.customerPhone;
+  }
 }
 
 async function enterAuthenticatedApp() {
@@ -512,7 +565,7 @@ function applyDemoData(errorMessage = '') {
     popularity: demoData.popularity,
     tableUtilization: demoData.tableUtilization,
     revenue: demoData.revenue,
-    maintenance: { expiredReservations: 0, autoClosedSessions: 0, dueSoonSessions: [], reservationGraceMinutes: 15, checkedAt: new Date().toISOString() },
+    maintenance: { expiredReservations: 0, autoClosedSessions: 0, overdueSessionCount: 0, overdueSessions: [], dueSoonSessions: [], reservationGraceMinutes: 15, checkedAt: new Date().toISOString() },
     venue: demoData.venue,
     health: '演示数据',
     mode: 'demo',
@@ -532,6 +585,8 @@ async function refresh() {
     const maintenance = await api('/api/ops/maintenance', { method: 'POST' }).catch((error) => ({
       expiredReservations: 0,
       autoClosedSessions: 0,
+      overdueSessionCount: 0,
+      overdueSessions: [],
       dueSoonSessions: [],
       error: error.message,
     }));
@@ -617,6 +672,48 @@ async function loadMemberReservations(memberId, { renderAfter = false } = {}) {
       state.memberReservationsLoading = false;
     }
     if (renderAfter) render();
+  }
+}
+
+async function loadCustomerReservations({ renderAfter = false } = {}) {
+  if (!state.customerPlayer) {
+    state.customerReservations = [];
+    state.customerReservationsLoading = false;
+    if (renderAfter) render();
+    return;
+  }
+  state.customerReservationsLoading = true;
+  if (renderAfter) render();
+  try {
+    const rows = await customerApi('/api/public/me/reservations');
+    state.customerReservations = Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    state.customerReservations = [];
+    showToast(`我的预约加载失败：${error.message}`, 'err');
+  } finally {
+    state.customerReservationsLoading = false;
+    if (renderAfter) render();
+  }
+}
+
+async function loadCustomerProfile() {
+  if (!state.customerToken) {
+    setCustomerAuth('', null);
+    state.customerReservations = [];
+    return;
+  }
+  try {
+    const result = await customerApi('/api/public/auth/me');
+    if (!result?.player) {
+      setCustomerAuth('', null);
+      state.customerReservations = [];
+      return;
+    }
+    setCustomerAuth(state.customerToken, result.player);
+    if (state.customerPlayer) await loadCustomerReservations();
+  } catch {
+    setCustomerAuth('', null);
+    state.customerReservations = [];
   }
 }
 
@@ -1007,7 +1104,7 @@ function renderSelectedPanel() {
       ${renderTableMatchList(state.tableRecommendations)}
     </form>
     <form class="form-grid" data-form="settlement">
-      <h3>结算与战绩</h3>
+      <h3>结算关台</h3>
       ${
         openSession
           ? `<div class="session-banner"><strong>对局 #${openSession.id}</strong><span>已进行 ${formatDurationFrom(openSession.startedAt)}</span></div>
@@ -1017,66 +1114,7 @@ function renderSelectedPanel() {
             <button class="btn btn-danger full" data-settle type="button">结算关台</button>`
           : `<div class="empty-state compact">当前桌位暂无进行中的对局。</div>`
       }
-      <label class="field"><span>已结算 sessionId</span><input class="input" data-field="closedSessionId" value="${escapeAttr(state.closedSessionId)}" placeholder="结算后自动填入" /></label>
-      <label class="field">
-        <span>游戏</span>
-        <select class="input" data-field="gameId">
-          ${state.games.map((g) => `<option value="${g.id}" ${String(state.gameId) === String(g.id) ? 'selected' : ''}>${escapeHtml(g.title)}</option>`).join('')}
-        </select>
-      </label>
-      <div class="record-mode-toggle">
-        <button class="lb-toggle-btn ${state.recordMode !== 'multi' ? 'is-active' : ''}" data-record-mode="single" type="button">单胜者</button>
-        <button class="lb-toggle-btn ${state.recordMode === 'multi' ? 'is-active' : ''}" data-record-mode="multi" type="button">多人排名 (ELO)</button>
-      </div>
-      ${
-        state.recordMode === 'multi'
-          ? renderParticipantBuilder()
-          : `<label class="field">
-              <span>胜者</span>
-              <select class="input" data-field="winnerId">
-                <option value="">访客或无胜者</option>
-                ${state.players.map((p) => `<option value="${p.id}" ${String(state.winnerId) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.displayName)}</option>`).join('')}
-              </select>
-            </label>`
-      }
-      <button class="btn btn-secondary full" data-record type="button">写入战绩</button>
     </form>`;
-}
-
-// 多人排名录入构建器：选会员加入，按加入顺序自动排名 1,2,3...
-function renderParticipantBuilder() {
-  const chosen = state.recordParticipants || [];
-  const chosenIds = new Set(chosen.map((p) => Number(p.playerId)));
-  const available = state.players.filter((p) => !chosenIds.has(Number(p.id)));
-  const rows = chosen.length
-    ? chosen
-        .map((p, i) => {
-          const player = state.players.find((x) => Number(x.id) === Number(p.playerId));
-          return `
-            <div class="participant-row">
-              <span class="participant-rank">第 ${i + 1} 名</span>
-              <strong>${escapeHtml(player?.displayName || `#${p.playerId}`)}</strong>
-              <span class="participant-moves">
-                ${i > 0 ? `<button class="btn-icon-mini" data-part-up="${i}" type="button" title="上移">↑</button>` : ''}
-                ${i < chosen.length - 1 ? `<button class="btn-icon-mini" data-part-down="${i}" type="button" title="下移">↓</button>` : ''}
-                <button class="btn-icon-mini danger" data-part-remove="${i}" type="button" title="移除">×</button>
-              </span>
-            </div>`;
-        })
-        .join('')
-    : '<div class="empty-state compact">按名次依次添加参与会员（先加的名次靠前）。至少 2 人才计算 ELO。</div>';
-  return `
-    <div class="participant-builder">
-      <span class="field-label">参与排名（按名次顺序）</span>
-      <div class="participant-list">${rows}</div>
-      <div class="participant-add">
-        <select class="input" data-field="participantToAdd">
-          <option value="">＋ 添加会员…</option>
-          ${available.map((p) => `<option value="${p.id}">${escapeHtml(p.displayName)}</option>`).join('')}
-        </select>
-        <button class="btn btn-ghost btn-sm" data-part-add type="button">添加</button>
-      </div>
-    </div>`;
 }
 
 function renderMemberReservations(member) {
@@ -1387,11 +1425,19 @@ function renderOpsAlerts() {
         .filter((session) => Number(session.minutesLeft) > 0 && Number(session.minutesLeft) <= 15)
         .slice(0, 4);
   const expired = Number(maintenance.expiredReservations || 0);
-  const closed = Number(maintenance.autoClosedSessions || 0);
-  if (!expired && !closed && !dueSoon.length && !maintenance.error) return '';
+  const overdue = Array.isArray(maintenance.overdueSessions) && maintenance.overdueSessions.length
+    ? maintenance.overdueSessions
+    : state.openSessions
+        .map((session) => ({ ...session, ...sessionTiming(session) }))
+        .filter((session) => Number(session.minutesLeft) <= 0)
+        .slice(0, 4);
+  if (!expired && !overdue.length && !dueSoon.length && !maintenance.error) return '';
   const rows = [];
   if (expired) rows.push(`已自动标记 ${expired} 条超时未到预约`);
-  if (closed) rows.push(`已自动关台 ${closed} 个超过预约结束时间的对局`);
+  overdue.forEach((item) => {
+    const minutes = item.minutesOverdue ?? (Math.abs(Number(item.minutesLeft || 0)) || '?');
+    rows.push(`${item.tableCode || item.table_code || '桌位'} · ${item.guestName || item.guest_name || '客人'} 已超时 ${minutes} 分钟，请处理续时或结算`);
+  });
   if (maintenance.error) rows.push(`自动维护检查失败：${maintenance.error}`);
   dueSoon.forEach((item) => {
     const minutes = item.minutesLeft ?? item.minutes_left ?? '?';
@@ -1537,7 +1583,7 @@ function renderSessionsPage() {
         ${card('进行中对局', `${state.openSessions.length} 局`, renderSessions())}
         ${card('会员排行', '胜率', renderLeaderboard())}
       </section>
-      ${card('桌游目录热度', '用于录入战绩时选择游戏', `<div class="game-grid mt-1">${renderGameCatalog()}</div>`)}
+      ${card('桌游目录热度', '近 30 天', `<div class="game-grid mt-1">${renderGameCatalog()}</div>`)}
     </div>`;
 }
 
@@ -1688,6 +1734,181 @@ function renderCustomerGameCatalog(games) {
     </div>`;
 }
 
+function renderCustomerAccountPanel() {
+  if (state.customerPlayer) {
+    return `
+      <section class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
+        <div class="card-body p-5 gap-3">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs font-bold uppercase tracking-wider text-base-content/40">我的账号</div>
+              <h3 class="m-0 text-xl font-extrabold truncate">${escapeHtml(state.customerPlayer.displayName || '玩家')}</h3>
+            </div>
+            <button class="btn btn-ghost btn-sm rounded-full" data-customer-logout type="button">退出</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-sm">
+            <div class="rounded-2xl bg-base-200 p-3"><div class="text-base-content/45">手机号</div><strong>${escapeHtml(state.customerPlayer.phone || '未填写')}</strong></div>
+            <div class="rounded-2xl bg-base-200 p-3"><div class="text-base-content/45">会员号</div><strong>${escapeHtml(state.customerPlayer.memberNo || '自动生成')}</strong></div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  const isRegister = state.customerAuthMode === 'register';
+  return `
+    <section class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
+      <div class="card-body p-5 gap-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-xs font-bold uppercase tracking-wider text-base-content/40">玩家账号</div>
+            <h3 class="m-0 text-xl font-extrabold">${isRegister ? '创建账号' : '登录后预约'}</h3>
+          </div>
+          <div class="join">
+            <button class="join-item btn btn-xs ${!isRegister ? 'btn-primary' : 'btn-ghost'}" data-customer-auth-mode="login" type="button">登录</button>
+            <button class="join-item btn btn-xs ${isRegister ? 'btn-primary' : 'btn-ghost'}" data-customer-auth-mode="register" type="button">注册</button>
+          </div>
+        </div>
+        ${isRegister ? `
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">昵称</span>
+            <input class="input input-bordered w-full rounded-xl" data-field="customerRegisterName" value="${escapeAttr(state.customerRegisterName)}" placeholder="例如：小林" />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">手机号</span>
+            <input class="input input-bordered w-full rounded-xl" type="tel" data-field="customerRegisterPhone" value="${escapeAttr(state.customerRegisterPhone)}" />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">密码</span>
+            <input class="input input-bordered w-full rounded-xl" type="password" data-field="customerRegisterPassword" autocomplete="new-password" />
+          </label>
+          <button class="btn btn-primary w-full rounded-xl" data-customer-register type="button">注册并登录</button>
+        ` : `
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">手机号</span>
+            <input class="input input-bordered w-full rounded-xl" type="tel" data-field="customerLoginPhone" value="${escapeAttr(state.customerLoginPhone)}" />
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">密码</span>
+            <input class="input input-bordered w-full rounded-xl" type="password" data-field="customerLoginPassword" autocomplete="current-password" />
+          </label>
+          <button class="btn btn-primary w-full rounded-xl" data-customer-login type="button">登录</button>
+        `}
+        <p class="m-0 text-xs text-base-content/45">登录后提交的预约会自动进入“我的预约”。</p>
+      </div>
+    </section>`;
+}
+
+function renderCustomerReservationsPanel() {
+  if (!state.customerPlayer) {
+    return `
+      <section class="card bg-base-100 shadow-md rounded-3xl border border-base-300/60">
+        <div class="card-body p-5">
+          <h3 class="m-0 text-xl font-extrabold">我的预约</h3>
+          <p class="m-0 text-sm text-base-content/55">登录玩家账号后，可以查看自己的预约记录并在入场后提交战绩。</p>
+        </div>
+      </section>`;
+  }
+  if (state.customerReservationsLoading) {
+    return `
+      <section class="card bg-base-100 shadow-md rounded-3xl border border-base-300/60">
+        <div class="card-body p-5"><span class="loading loading-dots loading-md"></span></div>
+      </section>`;
+  }
+  const rows = state.customerReservations || [];
+  return `
+    <section class="card bg-base-100 shadow-md rounded-3xl border border-base-300/60">
+      <div class="card-body p-5 gap-4">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="m-0 text-xl font-extrabold">我的预约</h3>
+          <span class="badge badge-ghost rounded-full">${rows.length} 条</span>
+        </div>
+        ${rows.length ? `
+          <div class="grid gap-3">
+            ${rows.slice(0, 8).map((reservation) => {
+              const hasSession = Boolean(reservation.sessionId);
+              const hasRecord = Number(reservation.recordCount || 0) > 0;
+              return `
+                <article class="rounded-2xl border border-base-300/70 bg-base-200/55 p-4">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <strong class="text-base">${escapeHtml(reservation.tableCode || '待分配桌位')}</strong>
+                        <span class="badge badge-sm rounded-full">${escapeHtml(reservationStatusText(reservation.status))}</span>
+                      </div>
+                      <div class="mt-1 text-sm text-base-content/60">${escapeHtml(formatTimeRange(reservation.reservedStart, reservation.reservedEnd))}</div>
+                      <div class="mt-1 text-xs text-base-content/45">${reservation.partySize || 1} 人 · 预约 #${reservation.id}</div>
+                    </div>
+                    <div class="shrink-0">
+                      ${hasRecord
+                        ? '<span class="badge badge-success rounded-full">战绩已提交</span>'
+                        : hasSession
+                          ? `<button class="btn btn-sm btn-primary rounded-full" data-customer-record="${reservation.id}" type="button">填写战绩</button>`
+                          : '<span class="badge badge-ghost rounded-full">入场后可填战绩</span>'}
+                    </div>
+                  </div>
+                </article>`;
+            }).join('')}
+          </div>
+        ` : '<div class="rounded-2xl border border-dashed border-base-300 p-6 text-center text-sm text-base-content/50">还没有预约记录。</div>'}
+      </div>
+    </section>`;
+}
+
+function customerRecordReservation() {
+  return (state.customerReservations || []).find((item) => Number(item.id) === Number(state.customerRecordReservationId)) || null;
+}
+
+function renderCustomerRecordModal() {
+  const reservation = customerRecordReservation();
+  if (!reservation) return '';
+  const games = state.games || [];
+  const gameOptions = games.map((game) => `<option value="${game.id}" ${String(state.customerRecordGameId) === String(game.id) ? 'selected' : ''}>${escapeHtml(game.title)}</option>`).join('');
+  return `
+    <div class="modal modal-open">
+      <div class="modal-box rounded-3xl max-w-lg">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="font-extrabold text-2xl m-0">填写战绩</h3>
+            <p class="m-0 mt-1 text-sm text-base-content/55">${escapeHtml(reservation.tableCode || '')} · ${escapeHtml(formatTimeRange(reservation.reservedStart, reservation.reservedEnd))}</p>
+          </div>
+          <button class="btn btn-ghost btn-sm btn-circle" data-customer-record-close type="button">×</button>
+        </div>
+        <div class="mt-5 grid gap-4">
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">本局桌游</span>
+            <select class="select select-bordered w-full rounded-xl" data-field="customerRecordGameId">
+              <option value="">选择桌游</option>
+              ${gameOptions}
+            </select>
+          </label>
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">胜负结果</span>
+            <select class="select select-bordered w-full rounded-xl" data-field="customerRecordWinnerMode">
+              <option value="self" ${state.customerRecordWinnerMode === 'self' ? 'selected' : ''}>我赢了</option>
+              <option value="other" ${state.customerRecordWinnerMode === 'other' ? 'selected' : ''}>其他玩家赢了</option>
+              <option value="none" ${state.customerRecordWinnerMode === 'none' ? 'selected' : ''}>无胜者 / 合作通关</option>
+            </select>
+          </label>
+          ${state.customerRecordWinnerMode === 'other' ? `
+            <label class="form-control w-full">
+              <span class="label-text text-sm font-semibold mb-1">胜者昵称</span>
+              <input class="input input-bordered w-full rounded-xl" data-field="customerRecordWinnerName" value="${escapeAttr(state.customerRecordWinnerName)}" />
+            </label>
+          ` : ''}
+          <label class="form-control w-full">
+            <span class="label-text text-sm font-semibold mb-1">比分 / 备注</span>
+            <textarea class="textarea textarea-bordered min-h-24 rounded-xl" data-field="customerRecordScore" placeholder="可选，例如：我 83 分，阿杰 76 分">${escapeHtml(state.customerRecordScore)}</textarea>
+          </label>
+        </div>
+        <div class="modal-action">
+          <button class="btn btn-ghost rounded-xl" data-customer-record-close type="button">取消</button>
+          <button class="btn btn-primary rounded-xl" data-customer-record-submit type="button" ${games.length ? '' : 'disabled'}>提交战绩</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" data-customer-record-close></div>
+    </div>`;
+}
+
 function renderCustomerBookingPage() {
   const selectedTable = state.customerMatches.find((table) => Number(table.tableId) === Number(state.customerSelectedTableId));
   const games = state.games || [];
@@ -1707,7 +1928,9 @@ function renderCustomerBookingPage() {
     </section>
 
     <div class="max-w-7xl mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-[390px_minmax(0,1fr)] gap-8 items-start">
-      <aside class="card bg-base-100 shadow-xl rounded-3xl border border-base-300/60 lg:sticky lg:top-20">
+      <aside class="space-y-5 lg:sticky lg:top-20">
+        ${renderCustomerAccountPanel()}
+        <section class="card bg-base-100 shadow-xl rounded-3xl border border-base-300/60">
         <div class="card-body p-6 gap-3">
           <h3 class="text-xl font-bold tracking-tight">${state.customerResult ? '预约成功' : '填写预约信息'}</h3>
           ${state.customerResult
@@ -1761,9 +1984,11 @@ function renderCustomerBookingPage() {
             ` : ''}
           ` : ''}
         </div>
+        </section>
       </aside>
 
       <main class="min-w-0 space-y-6">
+        ${renderCustomerReservationsPanel()}
         <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
           ${renderCustomerLeaderboardPanel()}
           ${renderCustomerRentalPanel()}
@@ -1789,10 +2014,14 @@ function renderPublicCustomerShell() {
         <h1 class="m-0 text-lg font-extrabold tracking-tight">
           <span class="bg-gradient-to-r from-orange-500 to-purple-600 bg-clip-text text-transparent">🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</span>
         </h1>
-        ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="/admin#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
+        <div class="flex items-center gap-2">
+          ${state.customerPlayer ? `<span class="hidden sm:inline text-sm text-base-content/60">${escapeHtml(state.customerPlayer.displayName || '玩家')}</span>` : ''}
+          ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="/admin#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
+        </div>
       </header>
       ${renderCustomerBookingPage()}
     </div>
+    ${renderCustomerRecordModal()}
     ${renderCustomerChatWidget()}`;
 }
 
@@ -2504,43 +2733,6 @@ function bind() {
   root.querySelector('[data-walkin]')?.addEventListener('click', onWalkin);
   root.querySelector('[data-match-tables]')?.addEventListener('click', () => void onMatchTables());
   root.querySelector('[data-settle]')?.addEventListener('click', onSettle);
-  root.querySelector('[data-record]')?.addEventListener('click', onRecord);
-  root.querySelectorAll('[data-record-mode]').forEach((button) =>
-    button.addEventListener('click', () => {
-      state.recordMode = button.getAttribute('data-record-mode');
-      render();
-    })
-  );
-  root.querySelector('[data-part-add]')?.addEventListener('click', () => {
-    const id = Number(state.participantToAdd);
-    if (id && !state.recordParticipants.some((p) => Number(p.playerId) === id)) {
-      state.recordParticipants.push({ playerId: id });
-      state.participantToAdd = '';
-    }
-    render();
-  });
-  root.querySelectorAll('[data-part-remove]').forEach((button) =>
-    button.addEventListener('click', () => {
-      state.recordParticipants.splice(Number(button.getAttribute('data-part-remove')), 1);
-      render();
-    })
-  );
-  root.querySelectorAll('[data-part-up]').forEach((button) =>
-    button.addEventListener('click', () => {
-      const i = Number(button.getAttribute('data-part-up'));
-      const arr = state.recordParticipants;
-      [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
-      render();
-    })
-  );
-  root.querySelectorAll('[data-part-down]').forEach((button) =>
-    button.addEventListener('click', () => {
-      const i = Number(button.getAttribute('data-part-down'));
-      const arr = state.recordParticipants;
-      [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
-      render();
-    })
-  );
   root.querySelector('[data-member-create]')?.addEventListener('click', onCreateMember);
   root.querySelectorAll('[data-member-recharge]').forEach((button) => button.addEventListener('click', () => onMemberMoney(button, 'recharge')));
   root.querySelectorAll('[data-member-consume]').forEach((button) => button.addEventListener('click', () => onMemberMoney(button, 'consume')));
@@ -2572,6 +2764,23 @@ function bind() {
     })
   );
   root.querySelector('[data-customer-submit]')?.addEventListener('click', () => void onCustomerSubmit());
+  root.querySelectorAll('[data-customer-auth-mode]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.customerAuthMode = button.getAttribute('data-customer-auth-mode');
+      render();
+    })
+  );
+  root.querySelector('[data-customer-login]')?.addEventListener('click', () => void onCustomerLogin());
+  root.querySelector('[data-customer-register]')?.addEventListener('click', () => void onCustomerRegister());
+  root.querySelector('[data-customer-logout]')?.addEventListener('click', () => void onCustomerLogout());
+  root.querySelectorAll('[data-customer-record]').forEach((button) =>
+    button.addEventListener('click', () => openCustomerRecordModal(Number(button.getAttribute('data-customer-record'))))
+  );
+  root.querySelectorAll('[data-customer-record-close]').forEach((button) =>
+    button.addEventListener('click', () => closeCustomerRecordModal())
+  );
+  root.querySelector('[data-field="customerRecordWinnerMode"]')?.addEventListener('change', () => render());
+  root.querySelector('[data-customer-record-submit]')?.addEventListener('click', () => void onCustomerRecordSubmit());
 
   // ---- Game Management ----
   $('#btn-add-game')?.addEventListener('click', () => openGameModal(null));
@@ -2708,6 +2917,97 @@ async function onLogout() {
   render();
 }
 
+async function onCustomerLogin() {
+  try {
+    const result = await customerApi('/api/public/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: state.customerLoginPhone,
+        password: state.customerLoginPassword,
+      }),
+    });
+    setCustomerAuth(result.token, result.player);
+    state.customerLoginPassword = '';
+    showToast('玩家登录成功');
+    await loadCustomerReservations({ renderAfter: true });
+  } catch (error) {
+    showToast(error.message, 'err');
+  }
+}
+
+async function onCustomerRegister() {
+  try {
+    const result = await customerApi('/api/public/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        displayName: state.customerRegisterName,
+        phone: state.customerRegisterPhone,
+        password: state.customerRegisterPassword,
+      }),
+    });
+    setCustomerAuth(result.token, result.player);
+    state.customerRegisterPassword = '';
+    state.customerAuthMode = 'login';
+    showToast('玩家账号已创建');
+    await loadCustomerReservations({ renderAfter: true });
+  } catch (error) {
+    showToast(error.message, 'err');
+  }
+}
+
+async function onCustomerLogout() {
+  try {
+    if (state.customerToken) await customerApi('/api/public/auth/logout', { method: 'POST' });
+  } catch {
+    // Local logout should still work.
+  }
+  setCustomerAuth('', null);
+  state.customerReservations = [];
+  closeCustomerRecordModal(false);
+  render();
+}
+
+function openCustomerRecordModal(reservationId) {
+  state.customerRecordReservationId = reservationId;
+  state.customerRecordGameId = state.customerRecordGameId || state.games[0]?.id || '';
+  state.customerRecordWinnerMode = 'self';
+  state.customerRecordWinnerName = '';
+  state.customerRecordScore = '';
+  render();
+}
+
+function closeCustomerRecordModal(renderAfter = true) {
+  state.customerRecordReservationId = null;
+  state.customerRecordWinnerName = '';
+  state.customerRecordScore = '';
+  if (renderAfter) render();
+}
+
+async function onCustomerRecordSubmit() {
+  const reservation = customerRecordReservation();
+  if (!reservation) return;
+  if (!state.customerRecordGameId) {
+    showToast('请选择本局桌游。', 'err');
+    return;
+  }
+  try {
+    await customerApi(`/api/public/me/reservations/${reservation.id}/records`, {
+      method: 'POST',
+      body: JSON.stringify({
+        gameId: Number(state.customerRecordGameId),
+        winnerMode: state.customerRecordWinnerMode,
+        winnerDisplayName: state.customerRecordWinnerName,
+        scoreNote: state.customerRecordScore,
+      }),
+    });
+    showToast('战绩已提交');
+    closeCustomerRecordModal(false);
+    await loadCustomerReservations({ renderAfter: true });
+  } catch (error) {
+    showToast(error.message, 'err');
+  }
+}
+
 function normalizedPartySize(value) {
   return Math.max(1, Math.min(20, Math.trunc(Number(value || 1))));
 }
@@ -2780,7 +3080,7 @@ async function onCustomerSubmit() {
   const guestPhone = String(state.customerPhone || '').trim();
   state.customerPartySize = partySize;
 
-  if (!guestName || !guestPhone) {
+  if (!state.customerPlayer && (!guestName || !guestPhone)) {
     showToast('请填写姓名和联系电话。', 'err');
     return;
   }
@@ -2790,7 +3090,7 @@ async function onCustomerSubmit() {
   }
 
   try {
-    const result = await api('/api/public/reservations', {
+    const result = await customerApi('/api/public/reservations', {
       method: 'POST',
       body: JSON.stringify({
         tableId: state.customerSelectedTableId || null,
@@ -2803,6 +3103,7 @@ async function onCustomerSubmit() {
     });
     state.customerResult = result;
     showToast(`预约已提交：${result.tableCode || '系统已分配桌位'}`);
+    if (state.customerPlayer) await loadCustomerReservations();
     if (state.currentUser) await refresh();
     else render();
   } catch (error) {
@@ -3033,50 +3334,7 @@ async function onSettle() {
         notes: state.settleNotes || null,
       }),
     });
-    state.closedSessionId = String(openSession.id);
-    showToast(`已结算关台，sessionId ${openSession.id} 已填入战绩区`);
-    await refresh();
-  } catch (error) {
-    showToast(error.message, 'err');
-  }
-}
-
-async function onRecord() {
-  if (!requireLive()) return;
-  const sessionId = Number(state.closedSessionId);
-  if (!sessionId) {
-    showToast('请先填写已结算 sessionId', 'err');
-    return;
-  }
-  const body = { gameId: Number(state.gameId), winnerDisplayName: null, scoreJson: null };
-  if (state.recordMode === 'multi') {
-    const parts = (state.recordParticipants || []).map((p, i) => ({ playerId: Number(p.playerId), rankNo: i + 1 }));
-    if (parts.length < 2) {
-      showToast('多人排名至少需要 2 名参与者', 'err');
-      return;
-    }
-    body.participants = parts;
-  } else {
-    body.winnerPlayerId = state.winnerId === '' ? null : Number(state.winnerId);
-  }
-  try {
-    const result = await api(`/api/sessions/${sessionId}/game-records`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-    if (result?.elo?.length) {
-      const summary = result.elo
-        .map((e) => {
-          const player = state.players.find((x) => Number(x.id) === Number(e.playerId));
-          const sign = e.delta >= 0 ? '+' : '';
-          return `${player?.displayName || '#' + e.playerId} ${sign}${e.delta}`;
-        })
-        .join('，');
-      showToast(`战绩已写入，ELO 变化：${summary}`);
-    } else {
-      showToast('战绩已写入');
-    }
-    state.recordParticipants = [];
+    showToast(`已结算关台，session #${openSession.id}`);
     await refresh();
   } catch (error) {
     showToast(error.message, 'err');
@@ -3442,6 +3700,7 @@ async function loadPublicData() {
   if (venue.status === 'fulfilled' && venue.value) state.venue = venue.value;
   if (leaderboard.status === 'fulfilled' && Array.isArray(leaderboard.value)) state.leaderboard = leaderboard.value;
   if (rentals.status === 'fulfilled') state.publicRentalGames = rentals.value?.data || [];
+  if (state.customerToken) await loadCustomerProfile();
 }
 
 async function init() {

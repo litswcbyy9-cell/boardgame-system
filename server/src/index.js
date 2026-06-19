@@ -27,7 +27,6 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SENSITIVE_KEYS = new Set(['password', 'token', 'authorization', 'password_hash', 'passwordHash']);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let expiringReservations = false;
-let autoClosingSessions = false;
 
 function corsOptions() {
   const originList = String(process.env.CORS_ORIGIN || '')
@@ -145,6 +144,17 @@ function publicUser(row) {
   };
 }
 
+function publicPlayer(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    memberNo: row.member_no ?? row.memberNo ?? null,
+    displayName: row.display_name ?? row.displayName,
+    phone: row.phone ?? null,
+    avatarUrl: row.avatar_url ?? row.avatarUrl ?? null,
+  };
+}
+
 async function createSession(userId) {
   const token = crypto.randomBytes(32).toString('base64url');
   const tokenHash = hashToken(token);
@@ -153,6 +163,36 @@ async function createSession(userId) {
     [userId, tokenHash, SESSION_DAYS]
   );
   return token;
+}
+
+async function createPlayerSession(playerId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = hashToken(token);
+  await pool.query(
+    'INSERT INTO player_sessions (player_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
+    [playerId, tokenHash, SESSION_DAYS]
+  );
+  return token;
+}
+
+async function playerFromRequest(req, { optional = false } = {}) {
+  const token = authTokenFrom(req);
+  if (!token) return null;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT p.id, p.member_no, p.display_name, p.phone, p.avatar_url
+       FROM player_sessions s
+       INNER JOIN players p ON p.id = s.player_id
+       WHERE s.token_hash = ? AND s.expires_at > NOW() AND p.status = 'active'
+       LIMIT 1`,
+      [hashToken(token)]
+    );
+    return publicPlayer(row);
+  } catch (error) {
+    if (!optional) throw error;
+    console.error('[WARN] player auth attach failed:', error.message);
+    return null;
+  }
 }
 
 async function attachAuth(req, _res, next) {
@@ -174,6 +214,17 @@ async function attachAuth(req, _res, next) {
     console.error('[WARN] auth attach failed:', error);
   }
   next();
+}
+
+async function requirePlayerAuth(req, res, next) {
+  try {
+    req.player = await playerFromRequest(req);
+    if (!req.player) return sendError(res, 401, 'unauthorized');
+    return next();
+  } catch (error) {
+    console.error('[WARN] player auth failed:', error);
+    return sendError(res, 401, 'unauthorized');
+  }
 }
 
 function requireAuth(req, res, next) {
@@ -255,89 +306,6 @@ async function expireOverdueReservations({ silent = false } = {}) {
   }
 }
 
-async function autoCloseOverdueSessions({ silent = false } = {}) {
-  if (autoClosingSessions) return 0;
-  autoClosingSessions = true;
-  const conn = await pool.getConnection();
-  try {
-    await conn.query(
-      `CREATE TEMPORARY TABLE IF NOT EXISTS tmp_auto_closed_sessions (
-        session_id INT UNSIGNED NOT NULL,
-        table_id INT UNSIGNED NOT NULL,
-        PRIMARY KEY (session_id),
-        KEY ix_tmp_auto_closed_table (table_id)
-      ) ENGINE=MEMORY`
-    );
-    await conn.query('TRUNCATE TABLE tmp_auto_closed_sessions');
-    await conn.query(
-      `INSERT IGNORE INTO tmp_auto_closed_sessions (session_id, table_id)
-       SELECT s.id, s.table_id
-       FROM play_sessions s
-       INNER JOIN reservations r ON r.id = s.reservation_id
-       WHERE s.ended_at IS NULL
-         AND r.status = 'active'
-         AND r.reserved_end <= NOW()`
-    );
-    const [[countRow]] = await conn.query('SELECT COUNT(*) AS closedCount FROM tmp_auto_closed_sessions');
-    const closedCount = Number(countRow?.closedCount || 0);
-    if (closedCount > 0) {
-      await conn.beginTransaction();
-      await conn.query(
-        `UPDATE play_sessions s
-         INNER JOIN tmp_auto_closed_sessions tmp ON tmp.session_id = s.id
-         SET
-           s.ended_at = NOW(),
-           s.billed_minutes = GREATEST(1, TIMESTAMPDIFF(MINUTE, s.started_at, NOW())),
-           s.amount_cents = IFNULL(s.amount_cents, 0),
-           s.notes = CASE
-             WHEN s.notes IS NULL OR s.notes = '' THEN '[系统] 预约时间结束自动关台'
-             WHEN s.notes LIKE '%[系统] 预约时间结束自动关台%' THEN s.notes
-             ELSE CONCAT(s.notes, CHAR(10), '[系统] 预约时间结束自动关台')
-           END`
-      );
-      await conn.query(
-        `UPDATE reservations r
-         INNER JOIN play_sessions s ON s.reservation_id = r.id
-         INNER JOIN tmp_auto_closed_sessions tmp ON tmp.session_id = s.id
-         SET r.status = 'completed'
-         WHERE r.status = 'active'`
-      );
-      await conn.query(
-        `UPDATE game_table_state gts
-         INNER JOIN (SELECT DISTINCT table_id FROM tmp_auto_closed_sessions) affected ON affected.table_id = gts.table_id
-         LEFT JOIN (
-           SELECT id, table_id
-           FROM (
-             SELECT
-               r.id,
-               r.table_id,
-               ROW_NUMBER() OVER (PARTITION BY r.table_id ORDER BY r.reserved_start ASC, r.id ASC) AS rn
-             FROM reservations r
-             WHERE r.status = 'pending'
-           ) ranked
-           WHERE rn = 1
-         ) nxt ON nxt.table_id = gts.table_id
-         SET
-           gts.status = IF(nxt.id IS NULL, 'idle', 'reserved'),
-           gts.current_session_id = NULL,
-           gts.current_reservation_id = nxt.id`
-      );
-      await conn.commit();
-      console.log(`[INFO] auto-closed ${closedCount} sessions after reserved end`);
-    }
-    await conn.query('DROP TEMPORARY TABLE IF EXISTS tmp_auto_closed_sessions');
-    return closedCount;
-  } catch (error) {
-    try { await conn.rollback(); } catch {}
-    if (!silent) throw error;
-    console.error('[WARN] auto-close overdue sessions failed:', error.message);
-    return 0;
-  } finally {
-    conn.release();
-    autoClosingSessions = false;
-  }
-}
-
 async function getUpcomingSessionWarnings() {
   const [rows] = await pool.query(
     `SELECT s.id, t.code AS tableCode, r.reserved_end AS reservedEnd,
@@ -357,20 +325,43 @@ async function getUpcomingSessionWarnings() {
   return rows;
 }
 
+async function getOverdueSessionWarnings() {
+  const [rows] = await pool.query(
+    `SELECT s.id, t.code AS tableCode, r.reserved_end AS reservedEnd,
+            COALESCE(p.display_name, s.guest_name, r.guest_name, '现场客人') AS guestName,
+            TIMESTAMPDIFF(MINUTE, r.reserved_end, NOW()) AS minutesOverdue
+     FROM play_sessions s
+     INNER JOIN reservations r ON r.id = s.reservation_id
+     INNER JOIN game_tables t ON t.id = s.table_id
+     LEFT JOIN players p ON p.id = r.player_id
+     WHERE s.ended_at IS NULL
+       AND r.status = 'active'
+       AND r.reserved_end <= NOW()
+     ORDER BY r.reserved_end ASC
+     LIMIT 20`
+  );
+  return rows;
+}
+
 async function runOperationalMaintenance({ silent = false } = {}) {
   const expiredReservations = await expireOverdueReservations({ silent });
-  const autoClosedSessions = await autoCloseOverdueSessions({ silent });
   let dueSoonSessions = [];
+  let overdueSessions = [];
   try {
-    dueSoonSessions = await getUpcomingSessionWarnings();
+    [dueSoonSessions, overdueSessions] = await Promise.all([
+      getUpcomingSessionWarnings(),
+      getOverdueSessionWarnings(),
+    ]);
   } catch (error) {
     if (!silent) throw error;
-    console.error('[WARN] upcoming session warnings failed:', error.message);
+    console.error('[WARN] session warnings failed:', error.message);
   }
   return {
     expiredReservations,
-    autoClosedSessions,
+    autoClosedSessions: 0,
     dueSoonSessions,
+    overdueSessions,
+    overdueSessionCount: overdueSessions.length,
     reservationGraceMinutes: RESERVATION_GRACE_MINUTES,
     checkedAt: new Date().toISOString(),
   };
@@ -390,51 +381,6 @@ async function callSettle(sessionId, billedMinutes, amountCents, notes) {
   } finally {
     conn.release();
   }
-}
-
-async function callGameRecord(sessionId, gameId, winnerPlayerId, winnerDisplayName, scoreJson) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_insert_game_record(?, ?, ?, ?, ?, @out_rid, @out_err)', [
-      sessionId,
-      gameId,
-      winnerPlayerId ?? null,
-      winnerDisplayName ?? null,
-      scoreJson == null ? null : JSON.stringify(scoreJson),
-    ]);
-    const [[row]] = await conn.query('SELECT @out_rid AS recordId, @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
-
-// ELO 评分：胜者对每个败者两两计算，取平均增量。K=32，初始分 1200。
-function eloExpected(a, b) {
-  return 1 / (1 + Math.pow(10, (b - a) / 400));
-}
-
-// 根据名次列表计算每人 ELO 变化。participants: [{playerId, rating, rankNo}]
-// 名次越小越靠前；同名次视为平局。返回 Map(playerId -> delta)
-function calcEloDeltas(participants, k = 32) {
-  const deltas = new Map();
-  for (const p of participants) deltas.set(p.playerId, 0);
-  for (let i = 0; i < participants.length; i++) {
-    for (let j = i + 1; j < participants.length; j++) {
-      const a = participants[i];
-      const b = participants[j];
-      // 实际得分：名次小者胜(1)，相同则平(0.5)
-      let sa;
-      if (a.rankNo < b.rankNo) sa = 1;
-      else if (a.rankNo > b.rankNo) sa = 0;
-      else sa = 0.5;
-      const ea = eloExpected(a.rating, b.rating);
-      const da = Math.round(k * (sa - ea));
-      deltas.set(a.playerId, deltas.get(a.playerId) + da);
-      deltas.set(b.playerId, deltas.get(b.playerId) - da);
-    }
-  }
-  return deltas;
 }
 
 async function callCancelReservation(reservationId) {
@@ -531,6 +477,8 @@ const ERROR_MESSAGES = {
     member_not_found: '会员不存在或已停用',
     insufficient_balance: '会员不存在或余额不足',
     invalid_player_id: '会员 ID 不合法',
+    invalid_phone: '手机号格式不正确',
+    phone_registered: '该手机号已经注册，请直接登录',
     invalid_time: '预约时间格式不合法',
     invalid_time_range: '结束时间必须晚于开始时间',
     missing_fields: '缺少必填字段，请补全后再提交',
@@ -548,7 +496,10 @@ const ERROR_MESSAGES = {
     reservation_not_pending: '该预约不是待入场状态，不能入场',
     reservation_not_cancellable: '该预约已入场、取消或完成，不能再取消',
     session_not_open: '该对局不存在或已经结算，不能重复关台',
+    session_not_started: '该预约尚未入场，暂时不能填写战绩',
     session_still_open: '该对局仍在进行中，请先结算关台再录入战绩',
+    record_exists: '该预约已经提交过战绩',
+    recording_moved_to_customer: '后台战绩录入已关闭，请由顾客在自己的预约记录中提交',
     game_not_found: '选择的桌游不存在',
 };
 
@@ -751,6 +702,104 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
   const token = authTokenFrom(req);
   if (token) {
     await pool.query('DELETE FROM auth_sessions WHERE token_hash = ?', [hashToken(token)]);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/public/auth/register', async (req, res) => {
+  const displayName = String(req.body?.displayName || '').trim();
+  const phone = String(req.body?.phone || '').trim();
+  const password = String(req.body?.password || '');
+
+  if (!displayName || !phone || !password) return sendError(res, 400, 'missing_fields');
+  if (!/^[0-9+\-\s]{6,32}$/.test(phone)) return sendError(res, 400, 'invalid_phone');
+  if (password.length < 6) return sendError(res, 400, 'weak_password');
+
+  const conn = await pool.getConnection();
+  let playerId = null;
+  try {
+    await conn.beginTransaction();
+    const [[existing]] = await conn.query(
+      `SELECT id, member_no, password_hash
+       FROM players
+       WHERE phone = ? AND status = 'active'
+       ORDER BY id ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [phone]
+    );
+    if (existing?.password_hash) {
+      await conn.rollback();
+      return sendError(res, 409, 'phone_registered');
+    }
+
+    const passwordHash = await hashPassword(password);
+    if (existing) {
+      playerId = Number(existing.id);
+      const memberNo = existing.member_no || `MB${new Date().getFullYear()}${String(playerId).padStart(5, '0')}`;
+      await conn.query(
+        `UPDATE players
+         SET display_name = ?, password_hash = ?, member_no = COALESCE(member_no, ?), last_login_at = NOW()
+         WHERE id = ?`,
+        [displayName, passwordHash, memberNo, playerId]
+      );
+    } else {
+      const [result] = await conn.query(
+        `INSERT INTO players (display_name, phone, password_hash, last_login_at)
+         VALUES (?, ?, ?, NOW())`,
+        [displayName, phone, passwordHash]
+      );
+      playerId = Number(result.insertId);
+      const memberNo = `MB${new Date().getFullYear()}${String(playerId).padStart(5, '0')}`;
+      await conn.query('UPDATE players SET member_no = ? WHERE id = ?', [memberNo, playerId]);
+    }
+    await conn.commit();
+
+    const token = await createPlayerSession(playerId);
+    const [[player]] = await pool.query(
+      'SELECT id, member_no, display_name, phone, avatar_url FROM players WHERE id = ?',
+      [playerId]
+    );
+    res.status(201).json({ token, player: publicPlayer(player) });
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    console.error('[ERROR] POST /api/public/auth/register:', error);
+    sendError(res, 500, 'database_error', String(error.message));
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/public/auth/login', async (req, res) => {
+  const phone = String(req.body?.phone || '').trim();
+  const password = String(req.body?.password || '');
+  const [[row]] = await pool.query(
+    `SELECT id, member_no, display_name, phone, avatar_url, password_hash
+     FROM players
+     WHERE phone = ? AND status = 'active' AND password_hash IS NOT NULL
+     ORDER BY id ASC
+     LIMIT 1`,
+    [phone]
+  );
+
+  if (!row || !(await verifyPassword(password, row.password_hash))) {
+    return sendError(res, 401, 'invalid_credentials');
+  }
+
+  await pool.query('UPDATE players SET last_login_at = NOW() WHERE id = ?', [row.id]);
+  const token = await createPlayerSession(row.id);
+  res.json({ token, player: publicPlayer(row) });
+});
+
+app.get('/api/public/auth/me', async (req, res) => {
+  const player = await playerFromRequest(req, { optional: true });
+  res.json({ player });
+});
+
+app.post('/api/public/auth/logout', requirePlayerAuth, async (req, res) => {
+  const token = authTokenFrom(req);
+  if (token) {
+    await pool.query('DELETE FROM player_sessions WHERE token_hash = ?', [hashToken(token)]);
   }
   res.json({ ok: true });
 });
@@ -1307,9 +1356,6 @@ app.post('/api/public/reservations', async (req, res) => {
   const normalizedName = String(guestName || '').trim();
   const normalizedPhone = guestPhone == null ? null : String(guestPhone).trim() || null;
 
-  if (!normalizedName || !reservedStart || !reservedEnd) {
-    return sendError(res, 400, 'missing_fields');
-  }
   if (!Number.isFinite(normalizedPartySize) || normalizedPartySize < 1 || normalizedPartySize > 20) {
     return sendError(res, 400, 'invalid_party_size');
   }
@@ -1318,6 +1364,13 @@ app.post('/api/public/reservations', async (req, res) => {
   }
 
   try {
+    const player = await playerFromRequest(req, { optional: true });
+    const effectiveName = player?.displayName || normalizedName;
+    const effectivePhone = player?.phone || normalizedPhone;
+    if (!effectiveName || !reservedStart || !reservedEnd) {
+      return sendError(res, 400, 'missing_fields');
+    }
+
     const pickedTable = tableId
       ? { tableId: Number(tableId), code: null, seatCapacity: null, areaType: null }
       : await recommendTableForReservation(normalizedPartySize, reservedStart, reservedEnd);
@@ -1328,9 +1381,9 @@ app.post('/api/public/reservations', async (req, res) => {
 
     const row = await callReserve(
       pickedTable.tableId,
-      null,
-      normalizedName,
-      normalizedPhone,
+      player?.id || null,
+      effectiveName,
+      effectivePhone,
       normalizedPartySize,
       reservedStart,
       reservedEnd
@@ -1351,6 +1404,83 @@ app.post('/api/public/reservations', async (req, res) => {
     console.error('[ERROR] POST /api/public/reservations:', e);
     sendError(res, 500, 'database_error', String(e.message));
   }
+});
+
+app.get('/api/public/me/reservations', requirePlayerAuth, async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT r.id, r.table_id AS tableId, t.code AS tableCode, r.player_id AS playerId,
+            r.guest_name AS guestName, r.guest_phone AS guestPhone, r.party_size AS partySize,
+            r.reserved_start AS reservedStart, r.reserved_end AS reservedEnd, r.status,
+            s.id AS sessionId, s.started_at AS startedAt, s.ended_at AS endedAt,
+            COALESCE(gr.recordCount, 0) AS recordCount, gr.lastRecordAt
+     FROM reservations r
+     INNER JOIN game_tables t ON t.id = r.table_id
+     LEFT JOIN play_sessions s ON s.reservation_id = r.id
+     LEFT JOIN (
+       SELECT session_id, COUNT(*) AS recordCount, MAX(played_at) AS lastRecordAt
+       FROM game_records
+       GROUP BY session_id
+     ) gr ON gr.session_id = s.id
+     WHERE r.player_id = ?
+     ORDER BY r.reserved_start DESC
+     LIMIT 80`,
+    [req.player.id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/public/me/reservations/:id/records', requirePlayerAuth, async (req, res) => {
+  const reservationId = Number(req.params.id);
+  const gameId = Number(req.body?.gameId);
+  const winnerMode = String(req.body?.winnerMode || 'self');
+  const winnerName = String(req.body?.winnerDisplayName || '').trim();
+  const scoreNote = String(req.body?.scoreNote || '').trim().slice(0, 500);
+
+  if (!reservationId) return sendError(res, 404, 'reservation_not_found');
+  if (!gameId) return sendError(res, 400, 'missing_gameId');
+
+  const [[reservation]] = await pool.query(
+    `SELECT r.id, r.status, s.id AS sessionId
+     FROM reservations r
+     LEFT JOIN play_sessions s ON s.reservation_id = r.id
+     WHERE r.id = ? AND r.player_id = ?
+     LIMIT 1`,
+    [reservationId, req.player.id]
+  );
+  if (!reservation) return sendError(res, 404, 'reservation_not_found');
+  if (!['active', 'completed'].includes(reservation.status)) return sendError(res, 409, 'session_not_started');
+  if (!reservation.sessionId) return sendError(res, 409, 'session_not_started');
+
+  const [[existingRecord]] = await pool.query('SELECT id FROM game_records WHERE session_id = ? LIMIT 1', [reservation.sessionId]);
+  if (existingRecord) return sendError(res, 409, 'record_exists');
+
+  const [[game]] = await pool.query('SELECT id, title FROM games WHERE id = ?', [gameId]);
+  if (!game) return sendError(res, 404, 'game_not_found');
+
+  let winnerPlayerId = null;
+  let winnerDisplayName = null;
+  if (winnerMode === 'self') {
+    winnerPlayerId = req.player.id;
+    winnerDisplayName = req.player.displayName;
+  } else if (winnerMode === 'other') {
+    winnerDisplayName = winnerName || '其他玩家';
+  }
+
+  const scoreJson = {
+    source: 'customer',
+    winnerMode,
+    note: scoreNote || null,
+    submittedByPlayerId: req.player.id,
+    submittedAt: new Date().toISOString(),
+  };
+
+  const [result] = await pool.query(
+    `INSERT INTO game_records (session_id, game_id, title_snapshot, winner_player_id, winner_display_name, score_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [reservation.sessionId, gameId, game.title, winnerPlayerId, winnerDisplayName, JSON.stringify(scoreJson)]
+  );
+
+  res.status(201).json({ recordId: result.insertId });
 });
 
 app.post('/api/reservations', requireAuth, async (req, res) => {
@@ -1538,91 +1668,7 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 });
 
 app.post('/api/sessions/:id/game-records', requireAuth, async (req, res) => {
-  const { gameId, winnerPlayerId, winnerDisplayName, scoreJson, participants } = req.body || {};
-  if (!gameId) return sendError(res, 400, 'missing_gameId');
-
-  // 解析参与者：[{playerId, rankNo, score}]。winner = rankNo 最小者（兜底用 winnerPlayerId）。
-  const parts = Array.isArray(participants)
-    ? participants
-        .map((p) => ({
-          playerId: Number(p.playerId),
-          rankNo: Number(p.rankNo ?? p.rank ?? 0) || 999,
-          score: p.score == null ? null : Number(p.score),
-        }))
-        .filter((p) => Number.isFinite(p.playerId) && p.playerId > 0)
-    : [];
-
-  // 确定胜者：优先显式 winnerPlayerId，否则取名次最小的参与者
-  let effectiveWinnerId = winnerPlayerId == null ? null : Number(winnerPlayerId);
-  if (effectiveWinnerId == null && parts.length) {
-    const minRank = Math.min(...parts.map((p) => p.rankNo));
-    const top = parts.filter((p) => p.rankNo === minRank);
-    if (top.length === 1) effectiveWinnerId = top[0].playerId;
-  }
-
-  // 1) 写 game_records（沿用存储过程，触发器会给 winner 加 wins/games）
-  const row = await callGameRecord(
-    Number(req.params.id),
-    Number(gameId),
-    effectiveWinnerId,
-    winnerDisplayName == null ? null : String(winnerDisplayName),
-    scoreJson
-  );
-  if (row.errCode) return sendError(res, 409, row.errCode);
-  const recordId = Number(row.recordId);
-
-  // 2) 多人对局：写参与者明细 + 更新 ELO/losses/games
-  let eloResult = [];
-  if (parts.length >= 2) {
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      // 读各参与者当前 ELO（缺则建行）
-      const ids = parts.map((p) => p.playerId);
-      await conn.query(
-        `INSERT IGNORE INTO player_stats (player_id, wins, games, elo_rating, losses)
-         SELECT id, 0, 0, 1200, 0 FROM players WHERE id IN (${ids.map(() => '?').join(',')})`,
-        ids
-      );
-      const [statRows] = await conn.query(
-        `SELECT player_id, elo_rating FROM player_stats WHERE player_id IN (${ids.map(() => '?').join(',')})`,
-        ids
-      );
-      const ratingMap = new Map(statRows.map((r) => [r.player_id, r.elo_rating]));
-      const withRating = parts.map((p) => ({ ...p, rating: ratingMap.get(p.playerId) ?? 1200 }));
-      const deltas = calcEloDeltas(withRating);
-      const minRank = Math.min(...parts.map((p) => p.rankNo));
-
-      for (const p of withRating) {
-        const before = p.rating;
-        const after = before + (deltas.get(p.playerId) || 0);
-        const isWinner = p.rankNo === minRank ? 1 : 0;
-        await conn.query(
-          `INSERT INTO game_record_participants (record_id, player_id, is_winner, rank_no, score, elo_before, elo_after)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [recordId, p.playerId, isWinner, p.rankNo, p.score, before, after]
-        );
-        // 触发器已给 winner +1 wins/games；这里给非胜者补 games/losses，并给所有人更新 elo
-        if (isWinner) {
-          await conn.query('UPDATE player_stats SET elo_rating=? WHERE player_id=?', [after, p.playerId]);
-        } else {
-          await conn.query(
-            'UPDATE player_stats SET elo_rating=?, games=games+1, losses=losses+1 WHERE player_id=?',
-            [after, p.playerId]
-          );
-        }
-        eloResult.push({ playerId: p.playerId, eloBefore: before, eloAfter: after, delta: after - before });
-      }
-      await conn.commit();
-    } catch (e) {
-      await conn.rollback();
-      console.error('[ERROR] elo update:', e);
-    } finally {
-      conn.release();
-    }
-  }
-
-  res.status(201).json({ recordId, elo: eloResult });
+  sendError(res, 410, 'recording_moved_to_customer');
 });
 
 // =====================================================================
@@ -2263,7 +2309,8 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
       日期: today,
       自动维护: {
         未到店预约数: maintenance.expiredReservations,
-        自动关台数: maintenance.autoClosedSessions,
+        超时占用对局数: maintenance.overdueSessionCount,
+        超时占用队列: maintenance.overdueSessions,
         即将结束对局: maintenance.dueSoonSessions,
         检查时间: maintenance.checkedAt,
       },

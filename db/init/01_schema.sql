@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS play_sessions;
 DROP TABLE IF EXISTS reservations;
 DROP TABLE IF EXISTS game_table_state;
 DROP TABLE IF EXISTS player_stats;
+DROP TABLE IF EXISTS player_sessions;
 DROP TABLE IF EXISTS players;
 DROP TABLE IF EXISTS game_tables;
 DROP TABLE IF EXISTS games;
@@ -151,6 +152,8 @@ CREATE TABLE players (
   member_no VARCHAR(32) NULL,
   display_name VARCHAR(100) NOT NULL,
   phone VARCHAR(32) NULL,
+  password_hash VARCHAR(180) NULL COMMENT '顾客登录密码哈希',
+  last_login_at DATETIME NULL COMMENT '顾客最近登录时间',
   avatar_url VARCHAR(512) NULL COMMENT '头像图片 URL',
   balance_cents INT UNSIGNED NOT NULL DEFAULT 0,
   total_recharged_cents INT UNSIGNED NOT NULL DEFAULT 0,
@@ -160,9 +163,23 @@ CREATE TABLE players (
   PRIMARY KEY (id),
   UNIQUE KEY uk_players_member_no (member_no),
   KEY ix_players_name (display_name),
+  KEY ix_players_phone (phone),
   KEY ix_players_status (status),
   KEY ix_players_created (created_at)
 ) ENGINE=InnoDB COMMENT='玩家/会员';
+
+CREATE TABLE player_sessions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  player_id INT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_player_sessions_token_hash (token_hash),
+  KEY ix_player_sessions_player (player_id),
+  KEY ix_player_sessions_expires (expires_at),
+  CONSTRAINT fk_player_sessions_player FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+) ENGINE=InnoDB COMMENT='顾客登录会话';
 
 CREATE TABLE player_stats (
   player_id INT UNSIGNED NOT NULL,
