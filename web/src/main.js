@@ -1737,7 +1737,7 @@ function renderCustomerGameCatalog(games) {
 function renderCustomerAccountPanel() {
   if (state.customerPlayer) {
     return `
-      <section class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
+      <section id="customer-account" class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
         <div class="card-body p-5 gap-3">
           <div class="flex items-center justify-between gap-3">
             <div class="min-w-0">
@@ -1756,7 +1756,7 @@ function renderCustomerAccountPanel() {
 
   const isRegister = state.customerAuthMode === 'register';
   return `
-    <section class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
+    <section id="customer-account" class="card bg-base-100 shadow-lg rounded-3xl border border-base-300/60">
       <div class="card-body p-5 gap-3">
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -1791,7 +1791,10 @@ function renderCustomerAccountPanel() {
             <span class="label-text text-sm font-semibold mb-1">密码</span>
             <input class="input input-bordered w-full rounded-xl" type="password" data-field="customerLoginPassword" autocomplete="current-password" />
           </label>
-          <button class="btn btn-primary w-full rounded-xl" data-customer-login type="button">登录</button>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button class="btn btn-primary rounded-xl" data-customer-login type="button">登录</button>
+            <button class="btn btn-outline btn-primary rounded-xl" data-customer-auth-mode="register" type="button">注册玩家账号</button>
+          </div>
         `}
         <p class="m-0 text-xs text-base-content/45">登录后提交的预约会自动进入“我的预约”。</p>
       </div>
@@ -2015,7 +2018,10 @@ function renderPublicCustomerShell() {
           <span class="bg-gradient-to-r from-orange-500 to-purple-600 bg-clip-text text-transparent">🎲 ${escapeHtml(state.venue?.name || '骰子猫桌游馆')}</span>
         </h1>
         <div class="flex items-center gap-2">
-          ${state.customerPlayer ? `<span class="hidden sm:inline text-sm text-base-content/60">${escapeHtml(state.customerPlayer.displayName || '玩家')}</span>` : ''}
+          ${state.customerPlayer
+            ? `<span class="hidden sm:inline text-sm text-base-content/60">${escapeHtml(state.customerPlayer.displayName || '玩家')}</span>`
+            : `<button class="btn btn-sm btn-ghost rounded-full" data-customer-auth-mode="login" data-customer-auth-scroll type="button">登录</button>
+               <button class="btn btn-sm btn-primary rounded-full" data-customer-auth-mode="register" data-customer-auth-scroll type="button">注册账号</button>`}
           ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="/admin#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
         </div>
       </header>
@@ -2766,8 +2772,12 @@ function bind() {
   root.querySelector('[data-customer-submit]')?.addEventListener('click', () => void onCustomerSubmit());
   root.querySelectorAll('[data-customer-auth-mode]').forEach((button) =>
     button.addEventListener('click', () => {
+      const shouldScroll = button.hasAttribute('data-customer-auth-scroll');
       state.customerAuthMode = button.getAttribute('data-customer-auth-mode');
       render();
+      if (shouldScroll) {
+        window.setTimeout(() => document.getElementById('customer-account')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+      }
     })
   );
   root.querySelector('[data-customer-login]')?.addEventListener('click', () => void onCustomerLogin());
