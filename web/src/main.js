@@ -224,6 +224,7 @@ const state = {
   selectedStaffId: null,
   activePage: pageFromHash(),
   sidebarCollapsed: window.localStorage.getItem(SIDEBAR_KEY) === '1',
+  mobileNavOpen: false,
   petOpen: false,
   petMessages: [],
   petInput: '',
@@ -1524,6 +1525,42 @@ function renderNav() {
     .join('');
 }
 
+function renderMobileNav() {
+  if (!state.mobileNavOpen) return '';
+  return `
+    <div class="lg:hidden fixed inset-0 z-40">
+      <button class="absolute inset-0 bg-black/35 backdrop-blur-[2px]" data-mobile-nav-close type="button" aria-label="关闭菜单"></button>
+      <aside class="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] bg-base-100 shadow-2xl border-r border-base-300 flex flex-col">
+        <div class="flex items-center justify-between px-4 py-4 border-b border-base-300">
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="grid place-items-center w-10 h-10 rounded-2xl bg-gradient-to-br from-orange-500 to-purple-600 text-xl shadow-lg">🎲</span>
+            <div class="min-w-0">
+              <div class="text-xs font-bold uppercase tracking-wider text-base-content/40">后台菜单</div>
+              <strong class="block truncate">${escapeHtml(state.venue?.name || '桌游门店')}</strong>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm btn-circle" data-mobile-nav-close type="button" aria-label="关闭菜单">×</button>
+        </div>
+        <nav class="grid gap-1 p-3 overflow-y-auto" aria-label="移动端后台导航">
+          ${visibleNavItems.map((item) => {
+            const active = state.activePage === item.id;
+            return `
+              <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
+                class="flex items-center gap-3 min-h-12 px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition ${active
+                  ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
+                  : 'text-base-content/75 hover:text-base-content hover:bg-base-200'}">
+                <span class="text-lg leading-none">${navEmoji[item.id] || '•'}</span>
+                <span>${escapeHtml(item.label)}</span>
+              </a>`;
+          }).join('')}
+        </nav>
+        <div class="mt-auto p-3 border-t border-base-300 text-xs text-base-content/45">
+          当前账号：${escapeHtml(state.currentUser?.displayName || state.currentUser?.username || '后台用户')}
+        </div>
+      </aside>
+    </div>`;
+}
+
 function renderDashboardPage(summary) {
   const pendingCount = pendingReservations().length;
   const card = (title, badge, body) => `
@@ -2649,6 +2686,7 @@ async function render() {
       <main class="min-w-0 flex flex-col" id="page-${escapeAttr(page.id)}">
         <header class="sticky top-0 z-30 flex items-center justify-between gap-4 px-5 sm:px-7 py-3 min-h-[56px] bg-base-100/85 backdrop-blur-xl border-b border-base-300/60">
           <div class="flex items-center gap-3 min-w-0">
+            <button class="btn btn-ghost btn-sm btn-circle lg:hidden shrink-0" data-mobile-nav-toggle type="button" aria-label="打开后台菜单">☰</button>
             ${hasOwnHeader ? '' : `<div class="min-w-0"><div class="text-[11px] font-bold uppercase tracking-wider text-base-content/45">${escapeHtml(page.eyebrow)}</div><h1 class="m-0 text-lg font-bold tracking-tight truncate">${escapeHtml(page.title)}</h1></div>`}
           </div>
           <div class="flex items-center gap-2">
@@ -2662,6 +2700,7 @@ async function render() {
         ${state.err ? `<div class="notice mx-5 sm:mx-7 mt-4">${escapeHtml(state.err)}</div>` : ''}
         <div class="px-5 sm:px-7 pb-10">${pageContent}</div>
       </main>
+      ${renderMobileNav()}
       ${renderPetWidget()}
     </div>`;
   bind();
@@ -2688,6 +2727,7 @@ function bind() {
   root.querySelectorAll('[data-page]').forEach((link) =>
     link.addEventListener('click', (event) => {
       event.preventDefault();
+      state.mobileNavOpen = false;
       navigateToPage(link.getAttribute('data-page'));
     })
   );
@@ -2699,6 +2739,16 @@ function bind() {
     window.localStorage.setItem(SIDEBAR_KEY, state.sidebarCollapsed ? '1' : '0');
     render();
   });
+  root.querySelector('[data-mobile-nav-toggle]')?.addEventListener('click', () => {
+    state.mobileNavOpen = true;
+    render();
+  });
+  root.querySelectorAll('[data-mobile-nav-close]').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.mobileNavOpen = false;
+      render();
+    })
+  );
   root.querySelector('[data-pet-toggle]')?.addEventListener('click', () => { state.petOpen = !state.petOpen; render(); });
   root.querySelector('[data-pet-close]')?.addEventListener('click', () => { state.petOpen = false; render(); });
   root.querySelector('[data-pet-send]')?.addEventListener('click', () => void onPetSend());
