@@ -8,7 +8,7 @@ INSERT INTO staff_profiles (id, employee_no, full_name, phone, position, status,
 (2, 'ST20260002', '值班店员', '13800009002', '店员', 'active', '2026-02-15');
 
 INSERT INTO app_users (id, staff_id, username, display_name, password_hash, role) VALUES
-(1, 1, 'admin', '门店管理员', 'a2395976e861856f7f79d8b55cc89121:b731bdae8895fe31ef1314e56937998b8e7040c53b04c0d15fe07a618debe95198c73d0899110513007d2613eb6d495b278654673f3de1c1cd93819e2ccae83a', 'admin');
+(1, 1, 'admin', '门店管理员', '2596da10b83d7a65cf359c397f3c8deb:7510b9199c07ce02c7d4af4269ba51fcb124c401d1c34fd9f1232cd84c5d048df3ac0f5638dcb63eb44f00b169c8eb745d887193187115ef02e540712b264e71', 'admin');
 
 INSERT INTO games (id, title, cover_image_url, rules_pdf_url, min_players, max_players, category, difficulty_level, avg_minutes, recommend_weight) VALUES
 (1, '卡坦岛', 'https://cf.geekdo-images.com/W3Bsga_uLP9kO91gZ7H8yw__original/img/xV7oisd3RQ8R-k18cdWAYthHXsA=/0x0/filters:format(jpeg)/pic2419375.jpg', 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', 3, 4, '策略', 3, 90, 4.60),
