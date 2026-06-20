@@ -132,6 +132,15 @@ function applyDemoData(errorMessage = '') {
 async function refresh() {
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const loadWarnings = [];
+    const safeApi = async (label, promise, fallback) => {
+      try {
+        return await promise;
+      } catch (error) {
+        loadWarnings.push(`${label}：${error.message}`);
+        return fallback;
+      }
+    };
     const maintenance = await api('/api/ops/maintenance', { method: 'POST' }).catch((error) => ({
       expiredReservations: 0,
       autoClosedSessions: 0,
@@ -144,16 +153,16 @@ async function refresh() {
       await Promise.all([
         api('/api/health').catch((error) => ({ db: false, error: error.message })),
         api('/api/tables'),
-        api('/api/players'),
-        api(`/api/members?q=${encodeURIComponent(state.memberSearch)}`),
-        api('/api/games'),
-        api('/api/reservations'),
-        api('/api/sessions/open'),
-        api('/api/leaderboard'),
-        api('/api/venue'),
-        api(`/api/reports/revenue?date=${today}`),
-        api('/api/reports/game-popularity?days=30'),
-        api('/api/reports/table-utilization?days=30'),
+        safeApi('会员列表', api('/api/players'), state.players || []),
+        safeApi('会员管理', api(`/api/members?q=${encodeURIComponent(state.memberSearch)}`), state.members || []),
+        safeApi('桌游目录', api('/api/games'), state.games || []),
+        safeApi('预约记录', api('/api/reservations'), state.reservations || []),
+        safeApi('进行中桌位', api('/api/sessions/open'), state.openSessions || []),
+        safeApi('排行榜', api('/api/leaderboard'), state.leaderboard || []),
+        safeApi('门店信息', api('/api/venue'), state.venue || null),
+        safeApi('收入报表', api(`/api/reports/revenue?date=${today}`), state.revenue || []),
+        safeApi('热门桌游', api('/api/reports/game-popularity?days=30'), state.popularity || []),
+        safeApi('桌位利用率', api('/api/reports/table-utilization?days=30'), state.tableUtilization || []),
         api('/api/ai/dashboard-snapshot?days=30').catch(() => null),
       ]);
 
@@ -177,7 +186,7 @@ async function refresh() {
       aiToolResults: aiDashboard?.toolResults || [],
       health: health?.db ? '数据库已连接' : 'API 可用',
       mode: 'live',
-      err: '',
+      err: loadWarnings.length ? `部分数据加载失败，已保留可用数据：${loadWarnings.slice(0, 3).join('；')}` : '',
     });
     if (!state.selectedId && tables.length) state.selectedId = tables[0].id;
     if (members.length) {
@@ -1757,6 +1766,7 @@ function renderPublicCustomerShell() {
           ${state.currentUser ? `<a class="btn btn-sm btn-ghost rounded-full" href="/admin#/dashboard" data-page="dashboard">进入后台 →</a>` : ''}
         </div>
       </header>
+      ${state.err ? `<div class="customer-service-notice">${escapeHtml(state.err)}</div>` : ''}
       ${renderCustomerBookingPage()}
     </div>
     ${renderCustomerRecordModal()}
@@ -3472,10 +3482,16 @@ async function loadPublicData() {
     api('/api/leaderboard?sortBy=elo'),
     api('/api/public/rental/games'),
   ]);
+  const failures = [];
   if (games.status === 'fulfilled' && Array.isArray(games.value)) state.games = games.value;
+  else failures.push('桌游目录');
   if (venue.status === 'fulfilled' && venue.value) state.venue = venue.value;
+  else failures.push('门店信息');
   if (leaderboard.status === 'fulfilled' && Array.isArray(leaderboard.value)) state.leaderboard = leaderboard.value;
+  else failures.push('排行榜');
   if (rentals.status === 'fulfilled') state.publicRentalGames = rentals.value?.data || [];
+  else failures.push('租借清单');
+  state.err = failures.length ? `部分内容暂不可用：${failures.join('、')}。预约功能可继续使用。` : '';
   if (state.customerToken) await loadCustomerProfile();
 }
 

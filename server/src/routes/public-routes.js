@@ -1,7 +1,7 @@
 
 
 export function registerPublicRoutes(app, ctx) {
-  const { pool } = ctx;
+  const { pool, runOperationalMaintenance, sendError } = ctx;
 
   app.get('/api/tables', async (_req, res) => {
     await runOperationalMaintenance({ silent: true });
