@@ -1153,6 +1153,58 @@ function renderAiCommandCenter(summary) {
     playCount: row.record_count ?? row.play_count ?? 0,
   }));
   const toneClass = (tone) => `neon-kpi--${['cyan', 'green', 'amber', 'rose', 'violet'].includes(tone) ? tone : 'cyan'}`;
+  const toolCount = tools.length || 5;
+  const flowNodes = [
+    {
+      key: 'input',
+      step: '01',
+      label: '数据接入',
+      detail: `${state.tables.length || 0} 张桌位 · ${state.reservations.length || 0} 条预约`,
+      meta: '桌位 / 会员 / 租借 / 收入',
+    },
+    {
+      key: 'tools',
+      step: '02',
+      label: '工具检索',
+      detail: `${toolCount} 个确定性工具先查数据库`,
+      meta: tools[0]?.step || tools[0]?.tool || '空桌、热度、风险队列',
+    },
+    {
+      key: 'reason',
+      step: '03',
+      label: '神经推理',
+      detail: '融合经营信号，生成上下文判断',
+      meta: 'LLM 只读数据，不直接改业务',
+    },
+    {
+      key: 'risk',
+      step: '04',
+      label: '风险研判',
+      detail: `${risks.length || 0} 个待关注运营信号`,
+      meta: risks[0]?.title || '超时、空桌、租借、活跃度',
+    },
+    {
+      key: 'action',
+      step: '05',
+      label: '建议动作',
+      detail: `${actions.length} 条可执行运营建议`,
+      meta: actions[0]?.label || '由店长或员工确认执行',
+    },
+  ];
+  const neuralMesh = `
+    <div class="neural-mesh" aria-hidden="true">
+      <svg viewBox="0 0 220 104" role="img" focusable="false">
+        <path class="neural-path neural-path--a" d="M20 22 C70 12, 92 38, 132 30 S178 18, 202 28" />
+        <path class="neural-path neural-path--b" d="M20 52 C62 48, 92 76, 132 58 S174 42, 202 72" />
+        <path class="neural-path neural-path--c" d="M20 82 C66 70, 92 24, 132 44 S176 84, 202 50" />
+      </svg>
+      <span style="--x:8%;--y:18%;--d:0s"></span>
+      <span style="--x:27%;--y:46%;--d:.18s"></span>
+      <span style="--x:46%;--y:28%;--d:.36s"></span>
+      <span style="--x:46%;--y:68%;--d:.52s"></span>
+      <span style="--x:66%;--y:42%;--d:.7s"></span>
+      <span style="--x:88%;--y:58%;--d:.9s"></span>
+    </div>`;
 
   return `
     <section class="ai-command-shell">
@@ -1161,28 +1213,23 @@ function renderAiCommandCenter(summary) {
           <div class="neon-eyebrow">AI OPERATION CORE</div>
           <h2>AI 经营大脑</h2>
           <p>系统先读取桌位、预约、会员、租借和收入数据，再由大模型生成经营建议；所有写操作仍由店员确认。</p>
-          <div class="ai-reasoning" aria-label="AI 推理链">
-            ${tools.length ? tools.map((tool, index) => `
-              <div class="ai-reasoning-step" style="--i:${index}">
-                <span class="ai-reasoning-dot">✓</span>
-                <div class="ai-reasoning-body">
-                  <strong>${escapeHtml(tool.step || tool.tool)}</strong>
-                  <small>${escapeHtml(tool.summary || '')}</small>
-                </div>
-              </div>`).join('') : '<span class="ai-reasoning-empty">工具巡检待同步</span>'}
-            <div class="ai-reasoning-step ai-reasoning-step--final" style="--i:${tools.length}">
-              <span class="ai-reasoning-dot ai-reasoning-dot--final">∑</span>
-              <div class="ai-reasoning-body">
-                <strong>大模型综合研判</strong>
-                <small>基于上述数据生成经营建议与风险提示</small>
-              </div>
-            </div>
-          </div>
         </div>
         <div class="ai-orbit" aria-hidden="true">
           <span></span><span></span><span></span>
           <strong>AI</strong>
         </div>
+      </div>
+      <div class="ai-flow" aria-label="AI 经营大脑横向推理流程">
+        ${flowNodes.map((node, index) => `
+          <article class="ai-flow-node ai-flow-node--${escapeAttr(node.key)}" style="--i:${index}">
+            <div class="ai-flow-head">
+              <span>${escapeHtml(node.step)}</span>
+              <strong>${escapeHtml(node.label)}</strong>
+            </div>
+            <p>${escapeHtml(node.detail)}</p>
+            <small>${escapeHtml(node.meta)}</small>
+            ${node.key === 'reason' ? neuralMesh : ''}
+          </article>`).join('')}
       </div>
       <div class="neon-kpi-grid">
         ${cards.map((card) => `
