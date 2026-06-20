@@ -2749,23 +2749,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
 /* AI 经营大脑横向流程：数据进入、工具检索、神经推理、风险研判、动作建议 */
 @keyframes ai-flow-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes ai-flow-signal {
-  from { transform: translateX(-12%); opacity: 0; }
-  18%, 82% { opacity: 1; }
-  to { transform: translateX(112%); opacity: 0; }
-}
-
-@keyframes neural-dash {
-  to { stroke-dashoffset: -180; }
-}
-
-@keyframes neural-pulse {
-  0%, 100% { transform: translate(-50%, -50%) scale(0.88); opacity: 0.72; }
-  50% { transform: translate(-50%, -50%) scale(1.18); opacity: 1; }
 }
 
 .ai-flow {
@@ -2789,20 +2774,6 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   pointer-events: none;
 }
 
-.ai-flow::after {
-  content: "";
-  position: absolute;
-  top: 31px;
-  left: 0;
-  width: 96px;
-  height: 12px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.9), rgba(251,191,36,0.9), transparent);
-  filter: blur(1px);
-  animation: ai-flow-signal 4.2s ease-in-out infinite;
-  pointer-events: none;
-}
-
 .ai-flow-node {
   position: relative;
   min-height: 154px;
@@ -2819,8 +2790,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     radial-gradient(circle at 12% 0%, rgba(249,115,22,0.12), transparent 44%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.92), 0 14px 34px rgba(88, 28, 135, 0.08);
   backdrop-filter: blur(14px);
-  animation: ai-flow-in 0.36s ease both;
-  animation-delay: calc(var(--i, 0) * 70ms);
+  animation: ai-flow-in 0.72s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 150ms);
 }
 
 .ai-flow-node::before {
@@ -2838,8 +2809,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
 .ai-flow-head,
 .ai-flow-node p,
-.ai-flow-node small,
-.neural-mesh {
+.ai-flow-node small {
   position: relative;
   z-index: 1;
 }
@@ -2888,56 +2858,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 }
 
 .ai-flow-node--reason {
-  min-height: 178px;
   border-color: rgba(168,85,247,0.24);
   background:
     radial-gradient(circle at 50% 78%, rgba(168,85,247,0.18), transparent 44%),
     linear-gradient(180deg, rgba(255,255,255,0.95), rgba(250,245,255,0.78));
-}
-
-.neural-mesh {
-  height: 76px;
-  margin-top: 6px;
-  overflow: hidden;
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(168,85,247,0.16), transparent 58%),
-    linear-gradient(135deg, rgba(255,247,237,0.9), rgba(250,245,255,0.86));
-  border: 1px solid rgba(168,85,247,0.16);
-}
-
-.neural-mesh svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.neural-path {
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 12 14;
-  stroke-dashoffset: 0;
-  animation: neural-dash 3.2s linear infinite;
-}
-
-.neural-path--a { stroke: rgba(249,115,22,0.72); }
-.neural-path--b { stroke: rgba(168,85,247,0.68); animation-duration: 2.6s; animation-direction: reverse; }
-.neural-path--c { stroke: rgba(16,185,129,0.58); animation-duration: 3.7s; }
-
-.neural-mesh span {
-  position: absolute;
-  left: var(--x);
-  top: var(--y);
-  width: 11px;
-  height: 11px;
-  border-radius: 999px;
-  background: #fff;
-  border: 2px solid rgba(168,85,247,0.8);
-  box-shadow: 0 0 0 6px rgba(168,85,247,0.08), 0 0 20px rgba(249,115,22,0.2);
-  animation: neural-pulse 1.7s ease-in-out infinite;
-  animation-delay: var(--d);
 }
 
 .ai-orbit {
@@ -3622,10 +3546,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-flow::after,
   .ai-flow-node,
-  .neural-path,
-  .neural-mesh span,
   .ai-orbit span {
     animation: none !important;
   }
@@ -3801,14 +3722,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     height: auto;
     background: linear-gradient(180deg, rgba(249,115,22,0.52), rgba(168,85,247,0.38), rgba(16,185,129,0.28));
   }
-  .ai-flow::after {
-    display: none;
-  }
   .ai-flow-node {
     min-height: auto;
-  }
-  .ai-flow-node--reason {
-    min-height: 174px;
   }
   .ai-orbit { display: none; }
   .neon-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3854,7 +3769,6 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   }
   .ai-command-shell { padding: 18px; border-radius: 22px; }
   .ai-flow-node { border-radius: 18px; }
-  .neural-mesh { height: 70px; }
   .neon-kpi-grid { grid-template-columns: 1fr; }
   .ai-command-copy h2 { font-size: 28px; }
   .neon-guide-card { padding: 18px; border-radius: 22px; }

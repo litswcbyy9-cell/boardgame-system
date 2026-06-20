@@ -1191,21 +1191,6 @@ function renderAiCommandCenter(summary) {
       meta: actions[0]?.label || '由店长或员工确认执行',
     },
   ];
-  const neuralMesh = `
-    <div class="neural-mesh" aria-hidden="true">
-      <svg viewBox="0 0 220 104" role="img" focusable="false">
-        <path class="neural-path neural-path--a" d="M20 22 C70 12, 92 38, 132 30 S178 18, 202 28" />
-        <path class="neural-path neural-path--b" d="M20 52 C62 48, 92 76, 132 58 S174 42, 202 72" />
-        <path class="neural-path neural-path--c" d="M20 82 C66 70, 92 24, 132 44 S176 84, 202 50" />
-      </svg>
-      <span style="--x:8%;--y:18%;--d:0s"></span>
-      <span style="--x:27%;--y:46%;--d:.18s"></span>
-      <span style="--x:46%;--y:28%;--d:.36s"></span>
-      <span style="--x:46%;--y:68%;--d:.52s"></span>
-      <span style="--x:66%;--y:42%;--d:.7s"></span>
-      <span style="--x:88%;--y:58%;--d:.9s"></span>
-    </div>`;
-
   return `
     <section class="ai-command-shell">
       <div class="ai-command-hero">
@@ -1228,7 +1213,6 @@ function renderAiCommandCenter(summary) {
             </div>
             <p>${escapeHtml(node.detail)}</p>
             <small>${escapeHtml(node.meta)}</small>
-            ${node.key === 'reason' ? neuralMesh : ''}
           </article>`).join('')}
       </div>
       <div class="neon-kpi-grid">
