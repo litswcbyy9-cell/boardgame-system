@@ -1,4 +1,16 @@
 
+import {
+  buildAgentActions,
+  buildAgentFallbackAnswer,
+  buildAgentPrompt,
+  buildAgentToolResults,
+  buildDashboardCards,
+  buildGuideFallbackReply,
+  loadDashboardSnapshot,
+  loadGuideContext,
+  recordAiInteraction,
+} from '../services/ai-agent.js';
+
 
 export function registerAiRoutes(app, ctx) {
   const { pool, sendError, requireAuth, callLLM, llmInfo, sanitizeAiReply, runOperationalMaintenance } = ctx;
@@ -8,7 +20,122 @@ export function registerAiRoutes(app, ctx) {
   });  
     
   // 桌游描述生成：输入桌游名+参数，生成中文简介  
-  app.post('/api/ai/game-description', requireAuth, async (req, res) => {  
+  app.get('/api/ai/dashboard-snapshot', requireAuth, async (req, res) => {
+    const snapshot = await loadDashboardSnapshot({
+      pool,
+      runOperationalMaintenance,
+      days: req.query.days,
+    });
+    res.json({
+      snapshot,
+      cards: buildDashboardCards(snapshot),
+      actions: buildAgentActions(snapshot, String(req.query.scope || 'dashboard')),
+      toolResults: buildAgentToolResults(snapshot),
+    });
+  });
+
+  app.post('/api/ai/agent', requireAuth, async (req, res) => {
+    const message = String(req.body?.message || '').trim();
+    const scope = ['dashboard', 'games', 'rental', 'members'].includes(req.body?.scope)
+      ? req.body.scope
+      : 'dashboard';
+    if (!message) return sendError(res, 400, 'missing_fields');
+
+    const startedAt = Date.now();
+    const snapshot = await loadDashboardSnapshot({ pool, runOperationalMaintenance, days: req.body?.days });
+    const cards = buildDashboardCards(snapshot);
+    const actions = buildAgentActions(snapshot, scope);
+    const toolResults = buildAgentToolResults(snapshot);
+    let answer = buildAgentFallbackAnswer(snapshot);
+    let mock = true;
+
+    try {
+      const result = await callLLM([
+        { role: 'system', content: buildAgentPrompt(snapshot, scope) },
+        { role: 'user', content: message },
+      ], { temperature: 0.35, maxTokens: 1800 });
+      answer = sanitizeAiReply(result.content || answer);
+      mock = result.mock;
+    } catch (error) {
+      mock = true;
+    }
+
+    const durationMs = Date.now() - startedAt;
+    await recordAiInteraction({
+      pool,
+      userType: 'staff',
+      userId: req.user?.id || null,
+      scope,
+      message,
+      tools: toolResults.map((item) => item.tool),
+      mock,
+      durationMs,
+    });
+
+    res.json({
+      answer,
+      cards,
+      toolResults,
+      actions,
+      trace: {
+        scope,
+        tools: toolResults.map((item) => item.tool),
+        durationMs,
+        writeAllowed: false,
+      },
+      mock,
+    });
+  });
+
+  app.post('/api/public/ai/guide', async (req, res) => {
+    const message = String(req.body?.message || '').trim();
+    if (!message) return sendError(res, 400, 'missing_fields');
+
+    const startedAt = Date.now();
+    const context = await loadGuideContext({
+      pool,
+      partySize: req.body?.partySize,
+      startAt: req.body?.startAt,
+      endAt: req.body?.endAt,
+      preferences: req.body?.preferences || message,
+    });
+    let reply = buildGuideFallbackReply(context);
+    let mock = true;
+
+    try {
+      const result = await callLLM([
+        {
+          role: 'system',
+          content: `你是桌游馆顾客导购。你只能推荐桌游、解释空桌状态和说明预约流程，不能说已经帮用户预约、锁座、取消或修改任何数据。导购数据：${JSON.stringify(context)}`,
+        },
+        { role: 'user', content: message },
+      ], { temperature: 0.45, maxTokens: 1200 });
+      reply = sanitizeAiReply(result.content || reply);
+      mock = result.mock;
+    } catch (error) {
+      mock = true;
+    }
+
+    await recordAiInteraction({
+      pool,
+      userType: 'customer',
+      scope: 'guide',
+      message,
+      tools: ['game_recommendation', 'table_availability'],
+      mock,
+      durationMs: Date.now() - startedAt,
+    });
+
+    res.json({
+      reply,
+      recommendedGames: context.recommendedGames,
+      availableTables: context.availableTables,
+      nextStep: '请在页面左侧确认人数、到店时间、离店时间和桌位后，由你亲自点击提交预约。',
+      mock,
+    });
+  });
+
+  app.post('/api/ai/game-description', requireAuth, async (req, res) => {
     const { title, category, minPlayers, maxPlayers, avgMinutes, difficulty } = req.body || {};  
     if (!title) return sendError(res, 400, 'missing_fields');  
     const meta = [  

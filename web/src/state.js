@@ -115,5 +115,11 @@ export function createInitialState(options = {}) {
   custChatMessages: [],
   custChatInput: '',
   custChatLoading: false,
+  aiSnapshot: null,
+  aiCards: [],
+  aiActions: [],
+  aiToolResults: [],
+  customerGuideGames: [],
+  customerGuideTables: [],
 };
 }

@@ -112,6 +112,10 @@ function applyDemoData(errorMessage = '') {
     tableUtilization: demoData.tableUtilization,
     revenue: demoData.revenue,
     maintenance: { expiredReservations: 0, autoClosedSessions: 0, overdueSessionCount: 0, overdueSessions: [], dueSoonSessions: [], reservationGraceMinutes: 15, checkedAt: new Date().toISOString() },
+    aiSnapshot: null,
+    aiCards: [],
+    aiActions: [],
+    aiToolResults: [],
     venue: demoData.venue,
     health: '演示数据',
     mode: 'demo',
@@ -136,9 +140,9 @@ async function refresh() {
       dueSoonSessions: [],
       error: error.message,
     }));
-    const [health, tables, players, members, games, reservations, openSessions, leaderboard, venue, revenue, popularity, tableUtilization] =
+    const [health, tables, players, members, games, reservations, openSessions, leaderboard, venue, revenue, popularity, tableUtilization, aiDashboard] =
       await Promise.all([
-        api('/api/health'),
+        api('/api/health').catch((error) => ({ db: false, error: error.message })),
         api('/api/tables'),
         api('/api/players'),
         api(`/api/members?q=${encodeURIComponent(state.memberSearch)}`),
@@ -150,6 +154,7 @@ async function refresh() {
         api(`/api/reports/revenue?date=${today}`),
         api('/api/reports/game-popularity?days=30'),
         api('/api/reports/table-utilization?days=30'),
+        api('/api/ai/dashboard-snapshot?days=30').catch(() => null),
       ]);
 
     Object.assign(state, {
@@ -166,6 +171,10 @@ async function refresh() {
       maintenance,
       popularity,
       tableUtilization,
+      aiSnapshot: aiDashboard?.snapshot || null,
+      aiCards: aiDashboard?.cards || [],
+      aiActions: aiDashboard?.actions || [],
+      aiToolResults: aiDashboard?.toolResults || [],
       health: health?.db ? '数据库已连接' : 'API 可用',
       mode: 'live',
       err: '',
@@ -1105,6 +1114,80 @@ function renderMobileNav() {
     </div>`;
 }
 
+function renderAiCommandCenter(summary) {
+  const fallbackCards = [
+    { id: 'tables', label: '空闲桌位', value: String(summary.idle || 0), tone: 'green', detail: `${summary.occupied || 0} 张占用` },
+    { id: 'reservations', label: '待处理预约', value: String(summary.pending || 0), tone: 'amber', detail: '需要店员确认到店' },
+    { id: 'sessions', label: '进行中对局', value: String(summary.open || 0), tone: 'cyan', detail: '关注临近结束对局' },
+    { id: 'members', label: '会员数量', value: String(summary.members || 0), tone: 'violet', detail: '可做复购运营' },
+  ];
+  const cards = state.aiCards?.length ? state.aiCards : fallbackCards;
+  const actions = state.aiActions?.length
+    ? state.aiActions
+    : [{ label: '当前数据稳定，建议主推热门桌游和会员活动', severity: 'info', page: 'dashboard' }];
+  const risks = state.aiSnapshot?.risks || [];
+  const tools = state.aiToolResults || [];
+  const topGames = state.aiSnapshot?.topGames || state.popularity.slice(0, 4).map((row) => ({
+    title: row.title || row.game_title || '热门桌游',
+    playCount: row.record_count ?? row.play_count ?? 0,
+  }));
+  const toneClass = (tone) => `neon-kpi--${['cyan', 'green', 'amber', 'rose', 'violet'].includes(tone) ? tone : 'cyan'}`;
+
+  return `
+    <section class="ai-command-shell">
+      <div class="ai-command-hero">
+        <div class="ai-command-copy">
+          <div class="neon-eyebrow">AI OPERATION CORE</div>
+          <h2>AI 经营大脑</h2>
+          <p>系统先读取桌位、预约、会员、租借和收入数据，再由大模型生成经营建议；所有写操作仍由店员确认。</p>
+          <div class="ai-command-tools">
+            ${tools.length ? tools.map((tool) => `<span>${escapeHtml(tool.tool)} · ${escapeHtml(tool.summary)}</span>`).join('') : '<span>工具巡检待同步</span>'}
+          </div>
+        </div>
+        <div class="ai-orbit" aria-hidden="true">
+          <span></span><span></span><span></span>
+          <strong>AI</strong>
+        </div>
+      </div>
+      <div class="neon-kpi-grid">
+        ${cards.map((card) => `
+          <article class="neon-kpi ${toneClass(card.tone)}">
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(card.value)}</strong>
+            <small>${escapeHtml(card.detail || '')}</small>
+          </article>`).join('')}
+      </div>
+      <div class="ai-command-panels">
+        <article class="neon-panel">
+          <div class="neon-panel-head"><span>风险雷达</span><b>${risks.length || 0}</b></div>
+          ${(risks.length ? risks : [{ title: '暂无高风险', detail: '可以重点做推荐和会员转化。', level: 'info', count: 0 }]).slice(0, 4).map((risk) => `
+            <div class="neon-risk neon-risk--${escapeAttr(risk.level || 'info')}">
+              <strong>${escapeHtml(risk.title)}</strong>
+              <span>${escapeHtml(risk.detail || '')}</span>
+              ${risk.count ? `<b>${risk.count}</b>` : ''}
+            </div>`).join('')}
+        </article>
+        <article class="neon-panel">
+          <div class="neon-panel-head"><span>AI 建议动作</span><b>${actions.length}</b></div>
+          ${actions.slice(0, 5).map((action) => `
+            <button class="neon-action" type="button" data-page="${escapeAttr(action.page || 'dashboard')}">
+              <span>${escapeHtml(action.label)}</span>
+              <small>${escapeHtml(action.severity || 'info')}</small>
+            </button>`).join('')}
+        </article>
+        <article class="neon-panel">
+          <div class="neon-panel-head"><span>热门桌游信号</span><b>${topGames.length}</b></div>
+          ${topGames.slice(0, 5).map((game, index) => `
+            <div class="neon-rank">
+              <span>${index + 1}</span>
+              <strong>${escapeHtml(game.title || '热门桌游')}</strong>
+              <small>${Number(game.playCount || 0)} 局</small>
+            </div>`).join('') || '<div class="neon-empty">暂无热度数据</div>'}
+        </article>
+      </div>
+    </section>`;
+}
+
 function renderDashboardPage(summary) {
   const pendingCount = pendingReservations().length;
   const card = (title, badge, body) => `
@@ -1118,7 +1201,8 @@ function renderDashboardPage(summary) {
       </div>
     </div>`;
   return `
-    <div class="dash-fresh space-y-5 pt-2">
+    <div class="dash-fresh dashboard-neon space-y-5 pt-2">
+      ${renderAiCommandCenter(summary)}
       <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="关键指标">${renderMetricCards(summary)}</section>
       ${renderOpsAlerts()}
       <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -1503,15 +1587,50 @@ function renderCustomerRecordModal() {
     </div>`;
 }
 
+function renderCustomerGuideHighlights() {
+  const games = state.customerGuideGames || [];
+  const tables = state.customerGuideTables || [];
+  if (!games.length && !tables.length) {
+    return `
+      <section class="neon-guide-card">
+        <div>
+          <span class="neon-eyebrow">AI GUIDE</span>
+          <h3>问问 AI：今晚适合玩什么？</h3>
+          <p>告诉我人数、时间、偏好，我会先查数据库里的桌游和空桌，再给你推荐方案。预约仍需要你亲自提交。</p>
+        </div>
+        <button class="btn btn-primary rounded-full" id="btn-cust-chat-open-inline" type="button">打开智能导购</button>
+      </section>`;
+  }
+  return `
+    <section class="neon-guide-card neon-guide-card--active">
+      <div>
+        <span class="neon-eyebrow">AI GUIDE RESULT</span>
+        <h3>智能导购结果</h3>
+        <p>根据当前人数、时间和偏好，AI 工具层已查询可选桌游与空桌。</p>
+      </div>
+      <div class="neon-guide-lists">
+        <div>
+          <strong>推荐桌游</strong>
+          ${games.slice(0, 3).map((game) => `<span>${escapeHtml(game.title)} · ${escapeHtml(game.reason || game.category || '')}</span>`).join('') || '<span>暂无匹配桌游</span>'}
+        </div>
+        <div>
+          <strong>当前空桌</strong>
+          ${tables.slice(0, 4).map((table) => `<span>${escapeHtml(table.code)} · ${table.seatCapacity || ''}人桌</span>`).join('') || '<span>暂无直接匹配空桌</span>'}
+        </div>
+      </div>
+    </section>`;
+}
+
 function renderCustomerBookingPage() {
   const selectedTable = state.customerMatches.find((table) => Number(table.tableId) === Number(state.customerSelectedTableId));
   const games = state.games || [];
 
   return `
-    <section class="relative overflow-hidden bg-gradient-to-br from-orange-500 via-pink-500 to-purple-600 text-white">
+    <section class="customer-neon-hero relative overflow-hidden text-white">
       <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 20% 30%, #fff 0, transparent 40%), radial-gradient(circle at 80% 70%, #fff 0, transparent 35%)"></div>
       <div class="relative max-w-7xl mx-auto px-5 sm:px-8 py-7 sm:py-9">
-        <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight tracking-tight">预约开局</h2>
+        <div class="neon-eyebrow">BOARDGAME NIGHT OPS</div>
+        <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight tracking-tight">AI 智能预约与桌游导购</h2>
         <p class="mt-2 max-w-2xl text-sm sm:text-base text-white/85">选好人数和时间，系统匹配桌位；也可以先看看榜单、可租借桌游和店内目录。</p>
         <div class="mt-4 flex flex-wrap gap-2 text-xs sm:text-sm font-semibold">
           <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${games.length} 款桌游</span>
@@ -1582,6 +1701,7 @@ function renderCustomerBookingPage() {
       </aside>
 
       <main class="min-w-0 space-y-6">
+        ${renderCustomerGuideHighlights()}
         ${renderCustomerReservationsPanel()}
         <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
           ${renderCustomerLeaderboardPanel()}
@@ -2476,6 +2596,7 @@ function bind() {
 
   // ---- Customer chat widget ----
   $('#btn-cust-chat-toggle')?.addEventListener('click', () => { state.custChatOpen = !state.custChatOpen; render(); });
+  $('#btn-cust-chat-open-inline')?.addEventListener('click', () => { state.custChatOpen = true; render(); });
   $('#btn-cust-chat-close')?.addEventListener('click', () => { state.custChatOpen = false; render(); });
   $('#btn-cust-chat-send')?.addEventListener('click', () => void onCustChatSend());
   $('#cust-chat-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void onCustChatSend(); } });
@@ -3260,7 +3381,10 @@ async function onAiSend() {
   state.aiLoading = true;
   render();
   try {
-    const result = await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ question }) });
+    const result = await api('/api/ai/agent', { method: 'POST', body: JSON.stringify({ message: question, scope: state.activePage || 'dashboard' }) });
+    state.aiCards = result.cards || state.aiCards;
+    state.aiActions = result.actions || state.aiActions;
+    state.aiToolResults = result.toolResults || state.aiToolResults;
     state.aiMessages.push({ role: 'assistant', content: result.answer || '（无回答）' });
     if (result.mock) showToast('演示回答（未配置大模型）');
   } catch (e) {
@@ -3279,7 +3403,10 @@ async function onPetSend() {
   state.petLoading = true;
   render();
   try {
-    const result = await api('/api/ai/ask', { method: 'POST', body: JSON.stringify({ question }) });
+    const result = await api('/api/ai/agent', { method: 'POST', body: JSON.stringify({ message: question, scope: state.activePage || 'dashboard' }) });
+    state.aiCards = result.cards || state.aiCards;
+    state.aiActions = result.actions || state.aiActions;
+    state.aiToolResults = result.toolResults || state.aiToolResults;
     state.petMessages.push({ role: 'assistant', content: result.answer || '（无回答）' });
   } catch (e) {
     state.petMessages.push({ role: 'assistant', content: `喵呜…出错了：${e.message}` });
@@ -3297,7 +3424,18 @@ async function onCustChatSend() {
   state.custChatLoading = true;
   render();
   try {
-    const result = await api('/api/public/ai/chat', { method: 'POST', body: JSON.stringify({ message }) });
+    const result = await api('/api/public/ai/guide', {
+      method: 'POST',
+      body: JSON.stringify({
+        message,
+        partySize: state.customerPartySize,
+        startAt: localInputToMysqlDatetime(state.customerStartAt),
+        endAt: localInputToMysqlDatetime(state.customerEndAt),
+        preferences: message,
+      }),
+    });
+    state.customerGuideGames = result.recommendedGames || [];
+    state.customerGuideTables = result.availableTables || [];
     state.custChatMessages.push({ role: 'assistant', content: result.reply || '（无回答）' });
   } catch (e) {
     state.custChatMessages.push({ role: 'assistant', content: `抱歉，出错了：${e.message}` });
