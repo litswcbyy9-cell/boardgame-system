@@ -1,6 +1,7 @@
 const ERROR_MESSAGES = {
     invalid_username: '账号只能包含字母、数字和下划线，长度 3-32 位',
-    weak_password: '密码至少 6 位',
+    weak_password: '密码至少 8 位',
+    password_too_short: '密码至少 8 位',
     username_exists: '账号已存在，请换一个账号名',
     registration_disabled: '公开注册已关闭，请由管理员在员工管理中创建账号',
     invalid_credentials: '账号或密码错误',

@@ -22,6 +22,7 @@ web/dist/
 .env.*
 !.env.*.example
 release/
+backups/
 docs.zip
 *.asar
 docs/demo/

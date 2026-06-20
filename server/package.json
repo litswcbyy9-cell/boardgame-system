@@ -4,12 +4,22 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "vitest run",
+    "test:api": "vitest run test/api"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "mysql2": "^3.12.0"
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "mysql2": "^3.12.0",
+    "pino": "^10.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.9"
   }
 }

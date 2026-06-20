@@ -1,3 +1,4 @@
+import { requestJson } from './api.js';
 import { addHours, eloTier, escapeAttr, escapeHtml, formatDateTime, formatDurationFrom, formatTime, formatTimeRange, formatWinRate, localInputToMysqlDatetime, parseAppDate, toLocalInputValue, yuan } from './format.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const AUTH_KEY = 'boardgame.auth.token';
@@ -360,62 +361,25 @@ function readableApiError(body, statusText) {
 }
 
 async function api(path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if (state.authToken) headers.Authorization = `Bearer ${state.authToken}`;
-  let response;
-  try {
-    response = await fetch(path, {
-      ...opts,
-      headers,
-    });
-  } catch {
-    throw new Error('无法连接后端服务，请确认服务已启动并且数据库可用。');
-  }
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const body = await response.json();
-      message = readableApiError(body, response.statusText);
-    } catch {
-      // keep status text
-    }
-    if (response.status === 401) {
+  return requestJson(path, opts, {
+    token: () => state.authToken,
+    errorMessage: readableApiError,
+    networkError: '?????????????????????????',
+    onUnauthorized: () => {
       state.currentUser = null;
       state.authToken = '';
       window.localStorage.removeItem(AUTH_KEY);
-    }
-    throw new Error(message);
-  }
-  if (response.status === 204) return null;
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
+    },
+  });
 }
 
 async function customerApi(path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if (state.customerToken) headers.Authorization = `Bearer ${state.customerToken}`;
-  let response;
-  try {
-    response = await fetch(path, { ...opts, headers });
-  } catch {
-    throw new Error('无法连接后端服务，请稍后再试。');
-  }
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const body = await response.json();
-      message = readableApiError(body, response.statusText);
-    } catch {
-      // keep status text
-    }
-    if (response.status === 401) {
-      setCustomerAuth('', null);
-    }
-    throw new Error(message);
-  }
-  if (response.status === 204) return null;
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
+  return requestJson(path, opts, {
+    token: () => state.customerToken,
+    errorMessage: readableApiError,
+    networkError: '???????????????',
+    onUnauthorized: () => setCustomerAuth('', null),
+  });
 }
 
 function setAuth(token, user) {
@@ -3479,7 +3443,7 @@ async function onSaveStaffAccount() {
   if (!payload.displayName) { showToast('请填写显示名称', 'err'); return; }
   if (!id && !payload.username) { showToast('请填写登录账号', 'err'); return; }
   if (!id && !password) { showToast('请填写初始密码', 'err'); return; }
-  if (password && password.length < 6) { showToast('密码至少6位', 'err'); return; }
+  if (password && password.length < 8) { showToast('密码至少8位', 'err'); return; }
 
   try {
     if (id) {

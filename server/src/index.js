@@ -6,21 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { auditSuccessfulWrites } from './audit.js';
 import {
   attachAuth,
-  authTokenFrom,
-  createPlayerSession,
-  createSession,
   playerFromRequest,
-  publicPlayer,
-  publicUser,
   requireAuth,
   requirePlayerAuth,
   requireTenantAdmin,
   tenantId,
 } from './auth.js';
-import { corsOptions, PORT, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
+import { corsOptions, PORT, RESERVATION_GRACE_MINUTES } from './config.js';
 import { pool } from './db.js';
 import { reservationErrorMessage, sendError } from './errors.js';
+import { logger } from './logger.js';
 import { callLLM, llmInfo } from './llm.js';
+import { applySecurityMiddleware } from './middleware/security.js';
 import {
   callCancelReservation,
   callCheckin,
@@ -30,7 +27,11 @@ import {
   recommendTableForReservation,
   runOperationalMaintenance,
 } from './services/reservations.js';
-import { hashPassword, hashToken, verifyPassword } from './security.js';
+import { sanitizeAiReply } from './services/ai-policy.js';
+import { registerAuthRoutes } from './routes/auth-routes.js';
+import { registerOpsRoutes } from './routes/ops-routes.js';
+import { hashPassword } from './security.js';
+import { strongPassword } from './validation.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] unhandledRejection:', reason instanceof Error ? reason.message : reason);
@@ -45,6 +46,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 中间件
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+applySecurityMiddleware(app);
 app.use(cors(corsOptions()));
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
@@ -71,7 +73,7 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(JSON.stringify({
+    logger.info({
       level: 'info',
       event: 'http_request',
       at: new Date().toISOString(),
@@ -80,7 +82,7 @@ app.use((req, res, next) => {
       path: req.originalUrl,
       statusCode: res.statusCode,
       durationMs: duration,
-    }));
+    }, 'http_request');
   });
   next();
 });
@@ -97,6 +99,8 @@ app.use((err, req, res, next) => {
 
 app.use(attachAuth);
 app.use(auditSuccessfulWrites);
+registerAuthRoutes(app);
+registerOpsRoutes(app);
 
 function toPositiveInt(value, fallback, max) {
   const n = Number(value);
@@ -154,193 +158,6 @@ function buildTableReason(row, partySize) {
   if (utilizationScore >= 80) parts.push('近期使用较均衡');
   return `${parts.join('，')}。`;
 }
-
-app.post('/api/auth/register', async (req, res) => {
-  if (!PUBLIC_REGISTER_ENABLED) {
-    return sendError(res, 403, 'registration_disabled');
-  }
-
-  const { username, password, displayName } = req.body || {};
-  const normalizedUsername = String(username || '').trim().toLowerCase();
-  const normalizedDisplayName = String(displayName || username || '').trim();
-
-  if (!/^[a-zA-Z0-9_]{3,32}$/.test(normalizedUsername)) {
-    return sendError(res, 400, 'invalid_username');
-  }
-  if (String(password || '').length < 6) {
-    return sendError(res, 400, 'weak_password');
-  }
-
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const passwordHash = await hashPassword(String(password));
-    const tempNo = `TMP${Date.now()}${Math.floor(Math.random() * 1000)}`;
-    const [staffResult] = await conn.query(
-      `INSERT INTO staff_profiles (employee_no, full_name, position, status, hired_at)
-       VALUES (?, ?, '店员', 'active', CURDATE())`,
-      [tempNo, normalizedDisplayName || normalizedUsername]
-    );
-    const employeeNo = `ST${new Date().getFullYear()}${String(staffResult.insertId).padStart(5, '0')}`;
-    await conn.query('UPDATE staff_profiles SET employee_no = ? WHERE id = ?', [employeeNo, staffResult.insertId]);
-    const [result] = await conn.query(
-      `INSERT INTO app_users (staff_id, username, display_name, password_hash, role)
-       VALUES (?, ?, ?, ?, 'staff')`,
-      [staffResult.insertId, normalizedUsername, normalizedDisplayName || normalizedUsername, passwordHash]
-    );
-    await conn.commit();
-    const token = await createSession(result.insertId);
-    const [[user]] = await pool.query(
-      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id,
-              sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
-       FROM app_users u
-       LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
-       WHERE u.id = ?`,
-      [result.insertId]
-    );
-    res.status(201).json({ token, user: publicUser(user) });
-  } catch (error) {
-    await conn.rollback();
-    if (error && error.code === 'ER_DUP_ENTRY') {
-      return sendError(res, 409, 'username_exists');
-    }
-    console.error('[ERROR] POST /api/auth/register:', error);
-    sendError(res, 500, 'database_error', String(error.message));
-  } finally {
-    conn.release();
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body || {};
-  const normalizedUsername = String(username || '').trim().toLowerCase();
-  const [[row]] = await pool.query(
-    `SELECT u.id, u.username, u.display_name, u.password_hash, u.role, u.staff_id,
-            sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
-     FROM app_users u
-     LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
-     WHERE u.username = ? AND u.status = 'active'
-     LIMIT 1`,
-    [normalizedUsername]
-  );
-
-  if (!row || !(await verifyPassword(String(password || ''), row.password_hash))) {
-    return sendError(res, 401, 'invalid_credentials');
-  }
-
-  const token = await createSession(row.id);
-  res.json({ token, user: publicUser(row) });
-});
-
-app.get('/api/auth/me', async (req, res) => {
-  res.json({ user: req.user || null });
-});
-
-app.post('/api/auth/logout', requireAuth, async (req, res) => {
-  const token = authTokenFrom(req);
-  if (token) {
-    await pool.query('DELETE FROM auth_sessions WHERE token_hash = ?', [hashToken(token)]);
-  }
-  res.json({ ok: true });
-});
-
-app.post('/api/public/auth/register', async (req, res) => {
-  const displayName = String(req.body?.displayName || '').trim();
-  const phone = String(req.body?.phone || '').trim();
-  const password = String(req.body?.password || '');
-
-  if (!displayName || !phone || !password) return sendError(res, 400, 'missing_fields');
-  if (!/^[0-9+\-\s]{6,32}$/.test(phone)) return sendError(res, 400, 'invalid_phone');
-  if (password.length < 6) return sendError(res, 400, 'weak_password');
-
-  const conn = await pool.getConnection();
-  let playerId = null;
-  try {
-    await conn.beginTransaction();
-    const [[existing]] = await conn.query(
-      `SELECT id, member_no, password_hash
-       FROM players
-       WHERE phone = ? AND status = 'active'
-       ORDER BY id ASC
-       LIMIT 1
-       FOR UPDATE`,
-      [phone]
-    );
-    if (existing?.password_hash) {
-      await conn.rollback();
-      return sendError(res, 409, 'phone_registered');
-    }
-
-    const passwordHash = await hashPassword(password);
-    if (existing) {
-      playerId = Number(existing.id);
-      const memberNo = existing.member_no || `MB${new Date().getFullYear()}${String(playerId).padStart(5, '0')}`;
-      await conn.query(
-        `UPDATE players
-         SET display_name = ?, password_hash = ?, member_no = COALESCE(member_no, ?), last_login_at = NOW()
-         WHERE id = ?`,
-        [displayName, passwordHash, memberNo, playerId]
-      );
-    } else {
-      const [result] = await conn.query(
-        `INSERT INTO players (display_name, phone, password_hash, last_login_at)
-         VALUES (?, ?, ?, NOW())`,
-        [displayName, phone, passwordHash]
-      );
-      playerId = Number(result.insertId);
-      const memberNo = `MB${new Date().getFullYear()}${String(playerId).padStart(5, '0')}`;
-      await conn.query('UPDATE players SET member_no = ? WHERE id = ?', [memberNo, playerId]);
-    }
-    await conn.commit();
-
-    const token = await createPlayerSession(playerId);
-    const [[player]] = await pool.query(
-      'SELECT id, member_no, display_name, phone, avatar_url FROM players WHERE id = ?',
-      [playerId]
-    );
-    res.status(201).json({ token, player: publicPlayer(player) });
-  } catch (error) {
-    try { await conn.rollback(); } catch {}
-    console.error('[ERROR] POST /api/public/auth/register:', error);
-    sendError(res, 500, 'database_error', String(error.message));
-  } finally {
-    conn.release();
-  }
-});
-
-app.post('/api/public/auth/login', async (req, res) => {
-  const phone = String(req.body?.phone || '').trim();
-  const password = String(req.body?.password || '');
-  const [[row]] = await pool.query(
-    `SELECT id, member_no, display_name, phone, avatar_url, password_hash
-     FROM players
-     WHERE phone = ? AND status = 'active' AND password_hash IS NOT NULL
-     ORDER BY id ASC
-     LIMIT 1`,
-    [phone]
-  );
-
-  if (!row || !(await verifyPassword(password, row.password_hash))) {
-    return sendError(res, 401, 'invalid_credentials');
-  }
-
-  await pool.query('UPDATE players SET last_login_at = NOW() WHERE id = ?', [row.id]);
-  const token = await createPlayerSession(row.id);
-  res.json({ token, player: publicPlayer(row) });
-});
-
-app.get('/api/public/auth/me', async (req, res) => {
-  const player = await playerFromRequest(req, { optional: true });
-  res.json({ player });
-});
-
-app.post('/api/public/auth/logout', requirePlayerAuth, async (req, res) => {
-  const token = authTokenFrom(req);
-  if (token) {
-    await pool.query('DELETE FROM player_sessions WHERE token_hash = ?', [hashToken(token)]);
-  }
-  res.json({ ok: true });
-});
 
 app.get('/api/staff', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -454,7 +271,7 @@ app.post('/api/staff/:id/account', requireTenantAdmin, async (req, res) => {
 
   if (!staffId) return sendError(res, 400, 'staff_not_found');
   if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) return sendError(res, 400, 'invalid_username');
-  if (password.length < 6) return sendError(res, 400, 'weak_password');
+  if (!strongPassword(password)) return sendError(res, 400, 'weak_password');
 
   try {
     const [[staff]] = await pool.query(
@@ -479,21 +296,6 @@ app.post('/api/staff/:id/account', requireTenantAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ ok: true, db: true });
-  } catch (e) {
-    res.status(503).json({ ok: false, db: false, message: String(e.message) });
-  }
-});
-
-app.post('/api/ops/maintenance', requireAuth, async (_req, res) => {
-  const result = await runOperationalMaintenance({ silent: true });
-  res.json(result);
-});
-
-/** 平面图：视图 v_table_status_floor */
 app.get('/api/tables', async (_req, res) => {
   await runOperationalMaintenance({ silent: true });
   const [rows] = await pool.query(
@@ -1345,6 +1147,7 @@ app.post('/api/staff-mgmt/create', requireTenantAdmin, async (req, res) => {
     const tid = tenantId(req);
     const { username, displayName, password, role, fullName, phone, position } = req.body||{};
     if (!username||!displayName||!password) return sendError(res, 400, 'missing');
+    if (!strongPassword(password)) return sendError(res, 400, 'weak_password');
     const normalizedRole = role === 'admin' ? 'admin' : 'staff';
     const passwordHash = await hashPassword(password);
     const [[existing]] = await pool.query('SELECT id FROM app_users WHERE tenant_id=? AND username=?', [tid, username]);
@@ -1398,7 +1201,7 @@ app.patch('/api/staff-mgmt/:id', requireTenantAdmin, async (req, res) => {
     if (status !== undefined) { updates.push('status=?'); params.push(nextStatus); }
     if (displayName !== undefined) { updates.push('display_name=?'); params.push(String(displayName).trim() || target.username); }
     if (password !== undefined && String(password).trim()) {
-      if (String(password).length < 6) return sendError(res, 400, 'password_too_short');
+      if (!strongPassword(password)) return sendError(res, 400, 'password_too_short');
       updates.push('password_hash=?');
       params.push(await hashPassword(String(password)));
     }
@@ -1915,7 +1718,7 @@ app.post('/api/ai/ask', requireAuth, async (req, res) => {
       { role: 'system', content: '你是桌游馆常驻运营助手。根据提供的 JSON 数据用简洁中文回答店员的问题。经营类问题只依据数据回答、不编造数字；你不能代替店员创建预约、结算、取消或修改任何数据，只能给出建议并引导店员到对应页面操作；如果发现即将结束、超时占用、租借逾期等风险，要主动点出来并给出下一步操作。桌游推荐类问题（按人数/时长/难度/分类/偏好）从「桌游目录」里挑选最合适的 2-4 款并说明推荐理由。' },
       { role: 'user', content: `数据：\n${JSON.stringify(context, null, 2)}\n\n问题：${question}` },
     ], { temperature: 0.4, maxTokens: 2500 });
-    res.json({ answer: content.trim(), data: context, mock });
+    res.json({ answer: sanitizeAiReply(content), data: context, mock });
   } catch (e) {
     console.error('[ERROR] ai ask:', e);
     sendError(res, 502, 'llm_error', String(e.message));
@@ -1995,7 +1798,7 @@ app.post('/api/public/ai/chat', async (req, res) => {
       },
       { role: 'user', content: message },
     ], { temperature: 0.3, maxTokens: 1600 });
-    res.json({ reply: content.trim(), mock, data: { tables } });
+    res.json({ reply: sanitizeAiReply(content), mock, data: { tables } });
   } catch (e) {
     console.error('[ERROR] ai chat:', e);
     sendError(res, 502, 'llm_error', String(e.message));
@@ -2022,21 +1825,23 @@ if (process.env.SERVE_WEB === '1') {
   });
 }
 
-const server = app.listen(PORT, () => {
-  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${PORT}`);
-  void runOperationalMaintenance({ silent: true });
-  setInterval(() => {
+if (process.env.NODE_ENV !== 'test') {
+  const server = app.listen(PORT, () => {
+    console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${PORT}`);
     void runOperationalMaintenance({ silent: true });
-  }, 60_000).unref();
-});
+    setInterval(() => {
+      void runOperationalMaintenance({ silent: true });
+    }, 60_000).unref();
+  });
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`[server] port ${PORT} is already in use. Close the old process or set PORT to another value.`);
-  } else {
-    console.error('[server] failed to start:', err);
-  }
-  process.exit(1);
-});
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[server] port ${PORT} is already in use. Close the old process or set PORT to another value.`);
+    } else {
+      console.error('[server] failed to start:', err);
+    }
+    process.exit(1);
+  });
+}
 
 export default app;
