@@ -1,5 +1,17 @@
 import { requestJson } from './api.js';
-import { ADMIN_PATH, clientErrorMessages, demoData, navItems, pageIds, statusText, visibleNavItems } from './app-data.js';
+import {
+  ADMIN_PATH,
+  clientErrorMessages,
+  defaultPageForLocation,
+  demoData,
+  isAdminPath,
+  navigateIds,
+  navItems,
+  pageFromHash,
+  pageIds,
+  statusText,
+  visibleNavItems,
+} from './app-data.js';
 import { showToast } from './components/toast.js';
 import { $ } from './dom.js';
 import { createInitialState } from './state.js';
@@ -17,6 +29,10 @@ const state = createInitialState({
   customerToken: window.localStorage.getItem(PLAYER_AUTH_KEY) || '',
   rentalLoanDueAt: toLocalInputValue(addHours(new Date(), 72)),
 });
+
+function currentPageMeta() {
+  return visibleNavItems.find((item) => item.id === state.activePage) || visibleNavItems[0] || navItems[0];
+}
 
 function readableApiError(body, statusText) {
   const code = body?.error;

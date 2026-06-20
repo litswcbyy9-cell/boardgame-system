@@ -110,23 +110,19 @@ export const navigateIds = new Set([...visibleNavItems.map((item) => item.id)]);
 export const pageIds = new Set([...navigateIds, ...publicPageIds]);
 export const ADMIN_PATH = '/admin';
 
-function isAdminPath() {
+export function isAdminPath() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   return path === ADMIN_PATH;
 }
 
-function defaultPageForLocation() {
+export function defaultPageForLocation() {
   return isAdminPath() ? 'dashboard' : 'customer';
 }
 
-function pageFromHash() {
+export function pageFromHash() {
   const fallback = defaultPageForLocation();
   const key = window.location.hash.replace(/^#\/?/, '').trim() || fallback;
   return pageIds.has(key) ? key : fallback;
-}
-
-function currentPageMeta() {
-  return visibleNavItems.find((item) => item.id === state.activePage) || visibleNavItems[0] || navItems[0];
 }
 
 export const demoData = {
