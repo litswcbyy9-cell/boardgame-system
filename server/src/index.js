@@ -1,14 +1,36 @@
 import express from 'express';
 import cors from 'cors';
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
 import crypto from 'node:crypto';
-import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auditSuccessfulWrites } from './audit.js';
+import {
+  attachAuth,
+  authTokenFrom,
+  createPlayerSession,
+  createSession,
+  playerFromRequest,
+  publicPlayer,
+  publicUser,
+  requireAuth,
+  requirePlayerAuth,
+  requireTenantAdmin,
+  tenantId,
+} from './auth.js';
+import { corsOptions, PORT, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
+import { pool } from './db.js';
+import { reservationErrorMessage, sendError } from './errors.js';
 import { callLLM, llmInfo } from './llm.js';
-
-dotenv.config();
+import {
+  callCancelReservation,
+  callCheckin,
+  callReserve,
+  callSettle,
+  callWalkin,
+  recommendTableForReservation,
+  runOperationalMaintenance,
+} from './services/reservations.js';
+import { hashPassword, hashToken, verifyPassword } from './security.js';
 
 // 兜底：任何未捕获的异步错误只记录日志，绝不让整个进程崩溃（导致全站 502）
 process.on('unhandledRejection', (reason) => {
@@ -19,24 +41,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const app = express();
-const scryptAsync = promisify(crypto.scrypt);
-const SESSION_DAYS = 7;
-const RESERVATION_GRACE_MINUTES = Math.max(1, Math.min(180, Number(process.env.RESERVATION_GRACE_MINUTES || 15)));
-const PUBLIC_REGISTER_ENABLED = process.env.ALLOW_PUBLIC_REGISTER === '1';
-const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-const SENSITIVE_KEYS = new Set(['password', 'token', 'authorization', 'password_hash', 'passwordHash']);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let expiringReservations = false;
-
-function corsOptions() {
-  const originList = String(process.env.CORS_ORIGIN || '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  if (originList.length) return { origin: originList, credentials: true };
-  if (process.env.NODE_ENV === 'production') return { origin: false };
-  return {};
-}
 
 // 中间件
 app.disable('x-powered-by');
@@ -91,308 +96,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER || 'boardgame',
-  password: process.env.DB_PASSWORD || 'boardgame',
-  database: process.env.DB_NAME || 'boardgame',
-  charset: 'utf8mb4',
-  timezone: process.env.DB_TIMEZONE || '+08:00',
-  dateStrings: true,
-  waitForConnections: true,
-  connectionLimit: 10,
-});
-
-function hashToken(token) {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-async function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const derived = await scryptAsync(password, salt, 64);
-  return `${salt}:${derived.toString('hex')}`;
-}
-
-async function verifyPassword(password, storedHash) {
-  const [salt, hash] = String(storedHash || '').split(':');
-  if (!salt || !hash) return false;
-  const derived = await scryptAsync(password, salt, 64);
-  const expected = Buffer.from(hash, 'hex');
-  return expected.length === derived.length && crypto.timingSafeEqual(expected, derived);
-}
-
-function authTokenFrom(req) {
-  const header = req.get('authorization') || '';
-  if (!header.startsWith('Bearer ')) return '';
-  return header.slice(7).trim();
-}
-
-function publicUser(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    username: row.username,
-    displayName: row.display_name ?? row.displayName,
-    role: row.role,
-    tenantId: row.tenant_id ?? row.tenantId ?? 1,
-    staffId: row.staff_id ?? row.staffId ?? null,
-    employeeNo: row.employee_no ?? row.employeeNo ?? null,
-    staffName: row.full_name ?? row.staffName ?? null,
-    staffPhone: row.staff_phone ?? row.staffPhone ?? null,
-    position: row.position ?? null,
-  };
-}
-
-function publicPlayer(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    memberNo: row.member_no ?? row.memberNo ?? null,
-    displayName: row.display_name ?? row.displayName,
-    phone: row.phone ?? null,
-    avatarUrl: row.avatar_url ?? row.avatarUrl ?? null,
-  };
-}
-
-async function createSession(userId) {
-  const token = crypto.randomBytes(32).toString('base64url');
-  const tokenHash = hashToken(token);
-  await pool.query(
-    'INSERT INTO auth_sessions (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
-    [userId, tokenHash, SESSION_DAYS]
-  );
-  return token;
-}
-
-async function createPlayerSession(playerId) {
-  const token = crypto.randomBytes(32).toString('base64url');
-  const tokenHash = hashToken(token);
-  await pool.query(
-    'INSERT INTO player_sessions (player_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
-    [playerId, tokenHash, SESSION_DAYS]
-  );
-  return token;
-}
-
-async function playerFromRequest(req, { optional = false } = {}) {
-  const token = authTokenFrom(req);
-  if (!token) return null;
-  try {
-    const [[row]] = await pool.query(
-      `SELECT p.id, p.member_no, p.display_name, p.phone, p.avatar_url
-       FROM player_sessions s
-       INNER JOIN players p ON p.id = s.player_id
-       WHERE s.token_hash = ? AND s.expires_at > NOW() AND p.status = 'active'
-       LIMIT 1`,
-      [hashToken(token)]
-    );
-    return publicPlayer(row);
-  } catch (error) {
-    if (!optional) throw error;
-    console.error('[WARN] player auth attach failed:', error.message);
-    return null;
-  }
-}
-
-async function attachAuth(req, _res, next) {
-  const token = authTokenFrom(req);
-  if (!token) return next();
-  try {
-    const [[row]] = await pool.query(
-      `SELECT u.id, u.username, u.display_name, u.role, u.staff_id, u.tenant_id,
-              sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
-       FROM auth_sessions s
-       INNER JOIN app_users u ON u.id = s.user_id
-       LEFT JOIN staff_profiles sp ON sp.id = u.staff_id
-       WHERE s.token_hash = ? AND s.expires_at > NOW() AND u.status = 'active'
-       LIMIT 1`,
-      [hashToken(token)]
-    );
-    req.user = publicUser(row);
-  } catch (error) {
-    console.error('[WARN] auth attach failed:', error);
-  }
-  next();
-}
-
-async function requirePlayerAuth(req, res, next) {
-  try {
-    req.player = await playerFromRequest(req);
-    if (!req.player) return sendError(res, 401, 'unauthorized');
-    return next();
-  } catch (error) {
-    console.error('[WARN] player auth failed:', error);
-    return sendError(res, 401, 'unauthorized');
-  }
-}
-
-function requireAuth(req, res, next) {
-  if (!req.user) {
-    return sendError(res, 401, 'unauthorized');
-  }
-  next();
-}
-
-function requireTenantAdmin(req, res, next) {
-  if (!req.user) return sendError(res, 401, 'unauthorized');
-  if (req.user.role !== 'admin') return sendError(res, 403, 'forbidden');
-  next();
-}
-
-// 获取当前请求的 tenant_id
-function tenantId(req) {
-  return req.user?.tenantId || 1;
-}
-
 app.use(attachAuth);
 app.use(auditSuccessfulWrites);
-
-async function callReserve(tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query(
-      'CALL sp_reserve_table(?, ?, ?, ?, ?, ?, ?, @out_rid, @out_err)',
-      [tableId, playerId, guestName, guestPhone, partySize, reservedStart, reservedEnd]
-    );
-    const [[row]] = await conn.query('SELECT @out_rid AS reservationId, @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
-
-async function callCheckin(reservationId) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_checkin_start_session(?, @out_sid, @out_err)', [reservationId]);
-    const [[row]] = await conn.query('SELECT @out_sid AS sessionId, @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
-
-async function callWalkin(tableId, guestName, guestPhone, partySize) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_start_walkin_session(?, ?, ?, ?, @out_sid, @out_err)', [tableId, guestName, guestPhone, partySize]);
-    const [[row]] = await conn.query('SELECT @out_sid AS sessionId, @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
-
-async function expireOverdueReservations({ silent = false } = {}) {
-  if (expiringReservations) return 0;
-  expiringReservations = true;
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_expire_overdue_reservations(?, @out_expired_count)', [RESERVATION_GRACE_MINUTES]);
-    const [[row]] = await conn.query('SELECT @out_expired_count AS expiredCount');
-    const count = Number(row?.expiredCount || 0);
-    if (count > 0) {
-      console.log(`[INFO] expired ${count} overdue reservations after ${RESERVATION_GRACE_MINUTES} minute grace`);
-    }
-    return count;
-  } catch (error) {
-    if (!silent) throw error;
-    console.error('[WARN] expire overdue reservations failed:', error.message);
-    return 0;
-  } finally {
-    conn.release();
-    expiringReservations = false;
-  }
-}
-
-async function getUpcomingSessionWarnings() {
-  const [rows] = await pool.query(
-    `SELECT s.id, t.code AS tableCode, r.reserved_end AS reservedEnd,
-            COALESCE(p.display_name, s.guest_name, r.guest_name, '现场客人') AS guestName,
-            TIMESTAMPDIFF(MINUTE, NOW(), r.reserved_end) AS minutesLeft
-     FROM play_sessions s
-     INNER JOIN reservations r ON r.id = s.reservation_id
-     INNER JOIN game_tables t ON t.id = s.table_id
-     LEFT JOIN players p ON p.id = r.player_id
-     WHERE s.ended_at IS NULL
-       AND r.status = 'active'
-       AND r.reserved_end > NOW()
-       AND r.reserved_end <= DATE_ADD(NOW(), INTERVAL 15 MINUTE)
-     ORDER BY r.reserved_end ASC
-     LIMIT 12`
-  );
-  return rows;
-}
-
-async function getOverdueSessionWarnings() {
-  const [rows] = await pool.query(
-    `SELECT s.id, t.code AS tableCode, r.reserved_end AS reservedEnd,
-            COALESCE(p.display_name, s.guest_name, r.guest_name, '现场客人') AS guestName,
-            TIMESTAMPDIFF(MINUTE, r.reserved_end, NOW()) AS minutesOverdue
-     FROM play_sessions s
-     INNER JOIN reservations r ON r.id = s.reservation_id
-     INNER JOIN game_tables t ON t.id = s.table_id
-     LEFT JOIN players p ON p.id = r.player_id
-     WHERE s.ended_at IS NULL
-       AND r.status = 'active'
-       AND r.reserved_end <= NOW()
-     ORDER BY r.reserved_end ASC
-     LIMIT 20`
-  );
-  return rows;
-}
-
-async function runOperationalMaintenance({ silent = false } = {}) {
-  const expiredReservations = await expireOverdueReservations({ silent });
-  let dueSoonSessions = [];
-  let overdueSessions = [];
-  try {
-    [dueSoonSessions, overdueSessions] = await Promise.all([
-      getUpcomingSessionWarnings(),
-      getOverdueSessionWarnings(),
-    ]);
-  } catch (error) {
-    if (!silent) throw error;
-    console.error('[WARN] session warnings failed:', error.message);
-  }
-  return {
-    expiredReservations,
-    autoClosedSessions: 0,
-    dueSoonSessions,
-    overdueSessions,
-    overdueSessionCount: overdueSessions.length,
-    reservationGraceMinutes: RESERVATION_GRACE_MINUTES,
-    checkedAt: new Date().toISOString(),
-  };
-}
-
-async function callSettle(sessionId, billedMinutes, amountCents, notes) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_end_session_settle(?, ?, ?, ?, @out_err)', [
-      sessionId,
-      billedMinutes,
-      amountCents,
-      notes ?? null,
-    ]);
-    const [[row]] = await conn.query('SELECT @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
-
-async function callCancelReservation(reservationId) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('CALL sp_cancel_reservation(?, @out_err)', [reservationId]);
-    const [[row]] = await conn.query('SELECT @out_err AS errCode');
-    return row;
-  } finally {
-    conn.release();
-  }
-}
 
 function toPositiveInt(value, fallback, max) {
   const n = Number(value);
@@ -449,172 +154,6 @@ function buildTableReason(row, partySize) {
   else parts.push('该时段无冲突预约');
   if (utilizationScore >= 80) parts.push('近期使用较均衡');
   return `${parts.join('，')}。`;
-}
-
-const ERROR_MESSAGES = {
-    invalid_username: '账号只能包含字母、数字和下划线，长度 3-32 位',
-    weak_password: '密码至少 6 位',
-    username_exists: '账号已存在，请换一个账号名',
-    registration_disabled: '公开注册已关闭，请由管理员在员工管理中创建账号',
-    invalid_credentials: '账号或密码错误',
-    unauthorized: '请先登录后再操作',
-    forbidden: '当前账号没有执行该操作的权限',
-    database_error: '数据库操作失败，请检查数据库连接或稍后重试',
-    llm_error: '大模型调用失败，请检查 API Key 配置或稍后重试',
-    copy_not_available: '该副本当前不可借出',
-    copy_not_found: '桌游副本不存在',
-    copy_lent: '该副本正在借出中，不能删除',
-    loan_not_found: '借出记录不存在',
-    loan_not_active: '该借出记录不是借出中状态',
-    missing_staff_name: '员工姓名不能为空',
-    staff_not_found: '员工不存在或已停用',
-    employee_no_exists: '员工号已存在',
-    staff_has_account: '该员工已经绑定后台账号',
-    account_exists: '账号已存在，请换一个账号名',
-    invalid_member_id: '会员编号不合法',
-    missing_display_name: '会员姓名不能为空',
-    invalid_amount: '金额必须大于 0',
-    member_not_found: '会员不存在或已停用',
-    insufficient_balance: '会员不存在或余额不足',
-    invalid_player_id: '会员 ID 不合法',
-    invalid_phone: '手机号格式不正确',
-    phone_registered: '该手机号已经注册，请直接登录',
-    invalid_time: '预约时间格式不合法',
-    invalid_time_range: '结束时间必须晚于开始时间',
-    missing_fields: '缺少必填字段，请补全后再提交',
-    invalid_guest_name: '访客名称不能为空',
-    invalid_party_size: '人数必须在 1 到 20 人之间',
-    missing_tableId: '缺少桌位 ID',
-    missing_gameId: '请选择要录入的桌游',
-    table_not_found: '桌位不存在',
-    table_occupied: '桌位正在占用中',
-    time_overlap: '该时间段已有预约',
-    capacity_exceeded: '预约人数超过该桌位容量，请选择更大桌位或包间',
-    reserved_slot_active: '当前时间段已有待入场预约',
-    no_table_available: '当前时间段没有容量合适的空闲桌位',
-    reservation_not_found: '预约记录不存在',
-    reservation_not_pending: '该预约不是待入场状态，不能入场',
-    reservation_not_cancellable: '该预约已入场、取消或完成，不能再取消',
-    session_not_open: '该对局不存在或已经结算，不能重复关台',
-    session_not_started: '该预约尚未入场，暂时不能填写战绩',
-    session_still_open: '该对局仍在进行中，请先结算关台再录入战绩',
-    record_exists: '该预约已经提交过战绩',
-    recording_moved_to_customer: '后台战绩录入已关闭，请由顾客在自己的预约记录中提交',
-    game_not_found: '选择的桌游不存在',
-};
-
-function errorMessage(code, fallback = '操作失败，请检查输入后重试') {
-  return ERROR_MESSAGES[code] || fallback;
-}
-
-function sendError(res, status, code, fallback) {
-  const message = errorMessage(code, fallback);
-  return res.status(status).json({ error: code, message, description: message });
-}
-
-function canonicalApiPath(req) {
-  return String(req.originalUrl || req.url || '')
-    .split('?')[0]
-    .replace(/^\/api\/v1(?=\/|$)/, '/api');
-}
-
-function auditResourceType(pathname) {
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts[1] === 'public') return parts[2] || 'public';
-  return parts[1] || 'unknown';
-}
-
-function auditResourceId(pathname) {
-  const parts = pathname.split('/').filter(Boolean).slice(2);
-  return parts.find((part) => /^\d+$/.test(part)) || null;
-}
-
-function sanitizedPayload(value, depth = 0) {
-  if (value == null || depth > 4) return value == null ? null : '[truncated]';
-  if (Array.isArray(value)) return value.slice(0, 30).map((item) => sanitizedPayload(item, depth + 1));
-  if (typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .slice(0, 80)
-      .map(([key, item]) => {
-        if (SENSITIVE_KEYS.has(key) || /password|token|secret|credential/i.test(key)) {
-          return [key, '[redacted]'];
-        }
-        return [key, sanitizedPayload(item, depth + 1)];
-      })
-  );
-}
-
-function requestBodyJson(req) {
-  if (!req.body || Object.keys(req.body).length === 0) return null;
-  const json = JSON.stringify(sanitizedPayload(req.body));
-  return json.length > 8000 ? JSON.stringify({ truncated: true }) : json;
-}
-
-function clientIp(req) {
-  const forwarded = String(req.get('x-forwarded-for') || '').split(',')[0].trim();
-  return forwarded || req.ip || req.socket?.remoteAddress || null;
-}
-
-async function writeAuditLog(req, res) {
-  const pathname = canonicalApiPath(req);
-  // TODO(多租户): tenant_id 目前为 NULL，多租户改造时从 req.tenant 或 JWT claim 中获取
-  const tenantId = req.tenant?.id || null;
-  await pool.query(
-    `INSERT INTO audit_logs
-      (tenant_id, user_id, action, resource_type, resource_id, request_method, request_path,
-       status_code, ip, user_agent, request_body_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      tenantId,
-      req.user?.id || null,
-      `${req.method} ${pathname}`,
-      auditResourceType(pathname),
-      auditResourceId(pathname),
-      req.method,
-      pathname,
-      res.statusCode,
-      clientIp(req),
-      String(req.get('user-agent') || '').slice(0, 255) || null,
-      requestBodyJson(req),
-    ]
-  );
-}
-
-function auditSuccessfulWrites(req, res, next) {
-  if (!WRITE_METHODS.has(req.method) || !canonicalApiPath(req).startsWith('/api/')) {
-    return next();
-  }
-  res.on('finish', () => {
-    if (res.statusCode >= 200 && res.statusCode < 400) {
-      writeAuditLog(req, res).catch((error) => {
-        console.error(JSON.stringify({
-          level: 'warn',
-          event: 'audit_log_failed',
-          at: new Date().toISOString(),
-          requestId: req.requestId,
-          message: error.message,
-        }));
-      });
-    }
-  });
-  next();
-}
-
-function reservationErrorMessage(code) {
-  return errorMessage(code, '预约失败，请检查桌位、人数和时间后重试');
-}
-
-async function recommendTableForReservation(partySize, reservedStart, reservedEnd) {
-  const [sets] = await pool.query('CALL sp_recommend_tables(?, ?, ?)', [partySize, reservedStart, reservedEnd]);
-  const row = (sets[0] || [])[0];
-  if (!row) return null;
-  return {
-    tableId: Number(row.table_id),
-    code: row.code,
-    seatCapacity: Number(row.seat_capacity),
-    areaType: row.area_type,
-  };
 }
 
 app.post('/api/auth/register', async (req, res) => {
@@ -2484,9 +2023,8 @@ if (process.env.SERVE_WEB === '1') {
   });
 }
 
-const port = Number(process.env.PORT || 9898);
-const server = app.listen(port, () => {
-  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${port}`);
+const server = app.listen(PORT, () => {
+  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${PORT}`);
   void runOperationalMaintenance({ silent: true });
   setInterval(() => {
     void runOperationalMaintenance({ silent: true });
@@ -2496,10 +2034,10 @@ const server = app.listen(port, () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(
-        `\n[server] 端口 ${port} 已被占用（常见：上次开的终端没关，或别的程序占用了该端口）。\n` +
+        `\n[server] 端口 ${PORT} 已被占用（常见：上次开的终端没关，或别的程序占用了该端口）。\n` +
         `解决办法二选一：\n` +
         `  1) 关掉所有正在跑 npm run dev 的黑窗口，再重新 npm run dev\n` +
-        `  2) Windows 查占用：netstat -ano | findstr :${port}  （把 ${port} 换成当前端口）\n` +
+        `  2) Windows 查占用：netstat -ano | findstr :${PORT}  （把 ${PORT} 换成当前端口）\n` +
         `     记下最后一列 PID，再执行：taskkill /PID 那一串数字 /F\n` +
         `  3) 或改端口：在 server/.env 里写 PORT=8788\n`
     );
