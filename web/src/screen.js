@@ -160,8 +160,8 @@ export function renderScreenPage(state) {
   const levelClass = { high: 'is-high', warning: 'is-warning', medium: 'is-warning', low: 'is-info', info: 'is-info' };
   const insightRows = insights
     .map(
-      (item) => `
-      <div class="screen-insight ${levelClass[item.level] || 'is-info'}">
+      (item, index) => `
+      <div class="screen-insight ${levelClass[item.level] || 'is-info'}" style="--i:${index}">
         <strong>${escapeHtml(item.title)}</strong>
         <span>${escapeHtml(item.detail)}</span>
       </div>`

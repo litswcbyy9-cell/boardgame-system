@@ -1152,8 +1152,22 @@ function renderAiCommandCenter(summary) {
           <div class="neon-eyebrow">AI OPERATION CORE</div>
           <h2>AI 经营大脑</h2>
           <p>系统先读取桌位、预约、会员、租借和收入数据，再由大模型生成经营建议；所有写操作仍由店员确认。</p>
-          <div class="ai-command-tools">
-            ${tools.length ? tools.map((tool) => `<span>${escapeHtml(tool.tool)} · ${escapeHtml(tool.summary)}</span>`).join('') : '<span>工具巡检待同步</span>'}
+          <div class="ai-reasoning" aria-label="AI 推理链">
+            ${tools.length ? tools.map((tool, index) => `
+              <div class="ai-reasoning-step" style="--i:${index}">
+                <span class="ai-reasoning-dot">✓</span>
+                <div class="ai-reasoning-body">
+                  <strong>${escapeHtml(tool.step || tool.tool)}</strong>
+                  <small>${escapeHtml(tool.summary || '')}</small>
+                </div>
+              </div>`).join('') : '<span class="ai-reasoning-empty">工具巡检待同步</span>'}
+            <div class="ai-reasoning-step ai-reasoning-step--final" style="--i:${tools.length}">
+              <span class="ai-reasoning-dot ai-reasoning-dot--final">∑</span>
+              <div class="ai-reasoning-body">
+                <strong>大模型综合研判</strong>
+                <small>基于上述数据生成经营建议与风险提示</small>
+              </div>
+            </div>
           </div>
         </div>
         <div class="ai-orbit" aria-hidden="true">

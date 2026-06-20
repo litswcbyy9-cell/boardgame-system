@@ -271,10 +271,10 @@ export function buildAgentActions(snapshot, scope = 'dashboard') {
 
 export function buildAgentToolResults(snapshot) {
   return [
-    { tool: 'daily_revenue', ok: true, summary: `今日收入 ¥${Math.round(num(snapshot?.revenue?.todayYuan))}` },
-    { tool: 'table_state', ok: true, summary: `空闲 ${num(snapshot?.tableState?.idle)} / 占用 ${num(snapshot?.tableState?.occupied)} / 预留 ${num(snapshot?.tableState?.reserved)}` },
-    { tool: 'risk_scan', ok: true, summary: `${(snapshot?.risks || []).length} 个经营提醒` },
-    { tool: 'rental_scan', ok: true, summary: `${num(snapshot?.rentalStats?.overdueLoans)} 个逾期租借` },
+    { tool: 'daily_revenue', step: '读取经营数据', ok: true, summary: `今日收入 ¥${Math.round(num(snapshot?.revenue?.todayYuan))}` },
+    { tool: 'table_state', step: '扫描桌位状态', ok: true, summary: `空闲 ${num(snapshot?.tableState?.idle)} / 占用 ${num(snapshot?.tableState?.occupied)} / 预留 ${num(snapshot?.tableState?.reserved)}` },
+    { tool: 'risk_scan', step: '研判经营风险', ok: true, summary: `${(snapshot?.risks || []).length} 个经营提醒` },
+    { tool: 'rental_scan', step: '核查租借逾期', ok: true, summary: `${num(snapshot?.rentalStats?.overdueLoans)} 个逾期租借` },
   ];
 }
 
