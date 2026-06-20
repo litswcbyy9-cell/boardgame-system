@@ -16,6 +16,7 @@ export function createInitialState(options = {}) {
   publicRentalGames: [],
   popularity: [],
   tableUtilization: [],
+  revenueTrend: [],
   revenue: null,
   maintenance: null,
   venue: null,

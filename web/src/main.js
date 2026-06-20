@@ -13,6 +13,7 @@ import {
   visibleNavItems,
 } from './app-data.js';
 import { showToast } from './components/toast.js';
+import { renderScreenPage, initScreenCharts, disposeScreenCharts } from './screen.js';
 import { $ } from './dom.js';
 import { createInitialState } from './state.js';
 import { addHours, eloTier, escapeAttr, escapeHtml, formatDateTime, formatDurationFrom, formatTime, formatTimeRange, formatWinRate, localInputToMysqlDatetime, parseAppDate, toLocalInputValue, yuan } from './format.js';
@@ -149,7 +150,7 @@ async function refresh() {
       dueSoonSessions: [],
       error: error.message,
     }));
-    const [health, tables, players, members, games, reservations, openSessions, leaderboard, venue, revenue, popularity, tableUtilization, aiDashboard] =
+    const [health, tables, players, members, games, reservations, openSessions, leaderboard, venue, revenue, popularity, tableUtilization, revenueTrend, aiDashboard] =
       await Promise.all([
         api('/api/health').catch((error) => ({ db: false, error: error.message })),
         api('/api/tables'),
@@ -163,6 +164,7 @@ async function refresh() {
         safeApi('收入报表', api(`/api/reports/revenue?date=${today}`), state.revenue || []),
         safeApi('热门桌游', api('/api/reports/game-popularity?days=30'), state.popularity || []),
         safeApi('桌位利用率', api('/api/reports/table-utilization?days=30'), state.tableUtilization || []),
+        safeApi('营收趋势', api('/api/reports/revenue-trend?days=30'), state.revenueTrend || []),
         api('/api/ai/dashboard-snapshot?days=30').catch(() => null),
       ]);
 
@@ -180,6 +182,7 @@ async function refresh() {
       maintenance,
       popularity,
       tableUtilization,
+      revenueTrend,
       aiSnapshot: aiDashboard?.snapshot || null,
       aiCards: aiDashboard?.cards || [],
       aiActions: aiDashboard?.actions || [],
@@ -2357,6 +2360,15 @@ async function render() {
     bind();
     return;
   }
+  // 数据大屏：全屏沉浸式布局，绕过侧边栏与顶部栏。
+  if (state.activePage === 'screen') {
+    $('#app').innerHTML = renderScreenPage(state);
+    bind();
+    initScreenCharts(state);
+    return;
+  }
+  // 离开大屏时释放 ECharts 实例，避免内存泄漏与重复 resize 监听。
+  disposeScreenCharts();
   const summary = counts();
   const page = currentPageMeta();
   const venueName = state.venue?.name || '桌游门店';
@@ -2388,6 +2400,9 @@ async function render() {
             ${state.reservations.filter(r => r.status === 'pending').length > 0 ? `<span class="badge badge-warning badge-sm rounded-full font-semibold">${state.reservations.filter(r => r.status === 'pending').length} 待处理</span>` : ''}
             ${state.openSessions.length > 0 ? `<span class="badge badge-info badge-sm rounded-full font-semibold">${state.openSessions.length} 进行中</span>` : ''}
             <span class="text-sm text-base-content/70 max-w-[120px] truncate">${escapeHtml(state.currentUser.displayName || state.currentUser.username)}</span>
+            <a class="btn btn-sm rounded-full gap-1 border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow hover:shadow-lg" href="#/screen" data-page="screen" title="数据大屏">
+              <span>📊</span><span class="hidden sm:inline">数据大屏</span>
+            </a>
             <button class="btn btn-ghost btn-sm btn-circle" data-refresh title="刷新">↻</button>
             <button class="btn btn-ghost btn-sm rounded-full" data-logout>退出</button>
           </div>

@@ -106,7 +106,9 @@ export const navItems = [
 export const hiddenAdminPageIds = new Set(['staff', 'billing', 'ai']);
 export const visibleNavItems = navItems.filter((item) => !hiddenAdminPageIds.has(item.id));
 export const publicPageIds = new Set(['customer']);
-export const navigateIds = new Set([...visibleNavItems.map((item) => item.id)]);
+// 数据大屏：可通过 #/screen 直达与按钮跳转，但不进侧边栏（全屏沉浸式布局）。
+export const adminUtilityPageIds = new Set(['screen']);
+export const navigateIds = new Set([...visibleNavItems.map((item) => item.id), ...adminUtilityPageIds]);
 export const pageIds = new Set([...navigateIds, ...publicPageIds]);
 export const ADMIN_PATH = '/admin';
 

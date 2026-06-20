@@ -99,4 +99,42 @@ export function registerReportsRoutes(app, ctx) {
     const [sets] = await pool.query('CALL sp_report_table_utilization(?)', [days]);  
     res.json(sets[0] || []);  
   });
+
+  // 营收趋势：按天聚合最近 N 天的结算收入与单量，用于数据大屏折线图。
+  // 用日历序列补齐无营收的日期，保证前端拿到连续的逐日序列。
+  app.get('/api/reports/revenue-trend', async (req, res) => {
+    const days = Math.min(180, Math.max(1, Number(req.query.days || 30)));
+    const [rows] = await pool.query(
+      `SELECT DATE(s.ended_at) AS day,
+              ROUND(SUM(s.amount_cents) / 100, 2) AS revenueYuan,
+              COUNT(*) AS settledSessions,
+              IFNULL(SUM(s.billed_minutes), 0) AS billedMinutes
+         FROM play_sessions s
+        WHERE s.ended_at IS NOT NULL
+          AND s.ended_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        GROUP BY DATE(s.ended_at)
+        ORDER BY day ASC`,
+      [days - 1]
+    );
+    const keyOf = (value) => {
+      const d = value instanceof Date ? value : new Date(value);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const byDay = new Map(rows.map((row) => [keyOf(row.day), row]));
+    const series = [];
+    const today = new Date();
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      const key = keyOf(d);
+      const hit = byDay.get(key);
+      series.push({
+        day: key,
+        label: `${d.getMonth() + 1}/${d.getDate()}`,
+        revenueYuan: hit ? Number(hit.revenueYuan) : 0,
+        settledSessions: hit ? Number(hit.settledSessions) : 0,
+        billedMinutes: hit ? Number(hit.billedMinutes) : 0,
+      });
+    }
+    res.json(series);
+  });
 }
