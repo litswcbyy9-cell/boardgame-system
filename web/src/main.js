@@ -1080,11 +1080,11 @@ function renderNav() {
       return `
         <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
           title="${escapeAttr(item.label)}"
-          class="flex items-center min-h-11 ${collapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-sm font-medium transition ${active
+          class="flex items-center min-h-11 ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-3'} py-2.5 rounded-xl text-sm font-medium transition ${active
             ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
             : 'text-white/75 hover:text-white hover:bg-white/10'}">
-          <span class="text-base leading-none">${navEmoji[item.id] || '•'}</span>
-          ${collapsed ? '' : `<span>${escapeHtml(item.label)}</span>`}
+          <span class="grid place-items-center w-6 h-6 shrink-0 text-[17px] leading-none">${navEmoji[item.id] || '•'}</span>
+          ${collapsed ? '' : `<span class="truncate">${escapeHtml(item.label)}</span>`}
         </a>`;
     })
     .join('');
@@ -1114,8 +1114,8 @@ function renderMobileNav() {
                 class="flex items-center gap-3 min-h-12 px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition ${active
                   ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
                   : 'text-base-content/75 hover:text-base-content hover:bg-base-200'}">
-                <span class="text-lg leading-none">${navEmoji[item.id] || '•'}</span>
-                <span>${escapeHtml(item.label)}</span>
+                <span class="grid place-items-center w-7 h-7 shrink-0 text-[19px] leading-none">${navEmoji[item.id] || '•'}</span>
+                <span class="truncate">${escapeHtml(item.label)}</span>
               </a>`;
           }).join('')}
         </nav>
