@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { auditSuccessfulWrites } from './audit.js';
 import {
   attachAuth,
@@ -15,7 +17,7 @@ import {
   requireTenantAdmin,
   tenantId,
 } from './auth.js';
-import { corsOptions, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
+import { corsOptions, PORT, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
 import { pool } from './db.js';
 import { reservationErrorMessage, sendError } from './errors.js';
 import { callLLM, llmInfo } from './llm.js';
@@ -30,7 +32,15 @@ import {
 } from './services/reservations.js';
 import { hashPassword, hashToken, verifyPassword } from './security.js';
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason instanceof Error ? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err.message);
+});
+
 export const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 中间件
 app.disable('x-powered-by');
@@ -2002,6 +2012,31 @@ app.get('/api/tenant/info', requireAuth, async (req, res) => {
     const [[gameCount]] = await pool.query('SELECT COUNT(*) as cnt FROM games WHERE tenant_id=?', [tid]);
     res.json({ ...tenant, venueCount: venueCount.cnt, staffCount: staffCount.cnt, gameCount: gameCount.cnt });
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
+});
+
+if (process.env.SERVE_WEB === '1') {
+  const webDist = path.resolve(__dirname, '../../web/dist');
+  app.use(express.static(webDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(webDist, 'index.html'));
+  });
+}
+
+const server = app.listen(PORT, () => {
+  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${PORT}`);
+  void runOperationalMaintenance({ silent: true });
+  setInterval(() => {
+    void runOperationalMaintenance({ silent: true });
+  }, 60_000).unref();
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[server] port ${PORT} is already in use. Close the old process or set PORT to another value.`);
+  } else {
+    console.error('[server] failed to start:', err);
+  }
+  process.exit(1);
 });
 
 export default app;
