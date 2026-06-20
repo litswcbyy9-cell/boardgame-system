@@ -1,8 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { auditSuccessfulWrites } from './audit.js';
 import {
   attachAuth,
@@ -17,7 +15,7 @@ import {
   requireTenantAdmin,
   tenantId,
 } from './auth.js';
-import { corsOptions, PORT, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
+import { corsOptions, PUBLIC_REGISTER_ENABLED, RESERVATION_GRACE_MINUTES } from './config.js';
 import { pool } from './db.js';
 import { reservationErrorMessage, sendError } from './errors.js';
 import { callLLM, llmInfo } from './llm.js';
@@ -32,16 +30,7 @@ import {
 } from './services/reservations.js';
 import { hashPassword, hashToken, verifyPassword } from './security.js';
 
-// 兜底：任何未捕获的异步错误只记录日志，绝不让整个进程崩溃（导致全站 502）
-process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] unhandledRejection:', reason instanceof Error ? reason.message : reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] uncaughtException:', err.message);
-});
-
-const app = express();
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const app = express();
 
 // 中间件
 app.disable('x-powered-by');
@@ -2015,34 +2004,4 @@ app.get('/api/tenant/info', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); sendError(res, 500, 'db_error'); }
 });
 
-if (process.env.SERVE_WEB === '1') {
-  const webDist = path.resolve(__dirname, '../../web/dist');
-  app.use(express.static(webDist));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(webDist, 'index.html'));
-  });
-}
-
-const server = app.listen(PORT, () => {
-  console.log(`${process.env.SERVE_WEB === '1' ? 'App' : 'API'} http://localhost:${PORT}`);
-  void runOperationalMaintenance({ silent: true });
-  setInterval(() => {
-    void runOperationalMaintenance({ silent: true });
-  }, 60_000).unref();
-});
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(
-        `\n[server] 端口 ${PORT} 已被占用（常见：上次开的终端没关，或别的程序占用了该端口）。\n` +
-        `解决办法二选一：\n` +
-        `  1) 关掉所有正在跑 npm run dev 的黑窗口，再重新 npm run dev\n` +
-        `  2) Windows 查占用：netstat -ano | findstr :${PORT}  （把 ${PORT} 换成当前端口）\n` +
-        `     记下最后一列 PID，再执行：taskkill /PID 那一串数字 /F\n` +
-        `  3) 或改端口：在 server/.env 里写 PORT=8788\n`
-    );
-  } else {
-    console.error('[server] 启动失败:', err);
-  }
-  process.exit(1);
-});
+export default app;
