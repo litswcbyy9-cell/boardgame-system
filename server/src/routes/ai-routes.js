@@ -10,6 +10,7 @@ import {
   loadGuideContext,
   recordAiInteraction,
 } from '../services/ai-agent.js';
+import { answerGameQuestion } from '../services/rag.js';
 
 
 export function registerAiRoutes(app, ctx) {
@@ -92,6 +93,33 @@ export function registerAiRoutes(app, ctx) {
     if (!message) return sendError(res, 400, 'missing_fields');
 
     const startedAt = Date.now();
+
+    // 桌游知识问题（怎么玩/规则/对比/点名某款桌游）优先走 RAG 知识库，
+    // 基于检索到的规则资料作答并附出处；纯推荐/空桌问题仍走下方导购流程。
+    const [allGames] = await pool.query('SELECT title FROM games');
+    if (isGameKnowledgeIntent(message, allGames.map((g) => g.title))) {
+      const rag = await answerGameQuestion({ pool, callLLM, sanitizeAiReply }, message);
+      if (rag.retrieved > 0) {
+        await recordAiInteraction({
+          pool,
+          userType: 'customer',
+          scope: 'guide',
+          message,
+          tools: ['rag_game_knowledge'],
+          mock: rag.mock,
+          durationMs: Date.now() - startedAt,
+        });
+        return res.json({
+          reply: rag.reply,
+          recommendedGames: [],
+          availableTables: [],
+          sources: rag.sources,
+          nextStep: '想预约的话，请在页面左侧确认人数与时间后亲自提交。',
+          mock: rag.mock,
+        });
+      }
+    }
+
     const context = await loadGuideContext({
       pool,
       partySize: req.body?.partySize,
@@ -343,6 +371,16 @@ export function registerAiRoutes(app, ctx) {
   function isCurrentAvailabilityIntent(message) {
     return /(现在|当前|目前|此刻|今天).*(空桌|空位|空闲|有桌|桌位|座位)|(空桌|空位|空闲桌|还有桌|有没有桌|有位置|有座位)/.test(message);
   }
+
+  // 桌游知识问题：怎么玩、规则、人数时长、玩法对比、推荐某类游戏等，走 RAG 知识库。
+  // 覆盖两类信号：(1) 桌游相关的提问词；(2) 句中直接点名某款在库桌游。
+  function isGameKnowledgeIntent(message, gameTitles = []) {
+    if (/(怎么玩|怎样玩|怎么赢|怎样赢|玩法|规则|机制|介绍|讲讲|说说|什么游戏|几个?人|多少人|多长时间|多久|时长|难度|难不难|好玩|适合|推荐|有什么|区别|不同|对比|类似|像.*游戏|胜利条件|怎么算分|赢)/.test(message)) {
+      return true;
+    }
+    // 句中直接提到某款桌游名（如「卡坦岛贵吗」「阿瓦隆」），也视为知识问题。
+    return gameTitles.some((title) => title && message.includes(title));
+  }
   
   // 顾客 AI 客服（公开端点）：只答桌游/预约相关，附带桌游目录和当前桌位状态
   app.post('/api/public/ai/chat', async (req, res) => {
@@ -370,6 +408,16 @@ export function registerAiRoutes(app, ctx) {
   
       if (isCurrentAvailabilityIntent(message)) {
         return res.json({ reply: availabilityReply, mock: false, data: { tables } });
+      }
+
+      // 桌游知识问题：走 RAG 知识库，基于检索到的桌游规则资料作答，并附出处。
+      if (isGameKnowledgeIntent(message, games.map((g) => g.title))) {
+        const rag = await answerGameQuestion({ pool, callLLM, sanitizeAiReply }, message);
+        return res.json({
+          reply: rag.reply,
+          mock: rag.mock,
+          data: { tables, sources: rag.sources, retrieved: rag.retrieved },
+        });
       }
   
       const catalog = games.map((g) => `${g.title}（${g.category}，${g.minP}-${g.maxP}人，${g.mins}分钟，难度${g.diff}/5）`).join('；');

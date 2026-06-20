@@ -1781,8 +1781,13 @@ function renderCustomerChatWidget() {
   const open = state.custChatOpen;
   const messages = state.custChatMessages || [];
   const bubbles = messages.length
-    ? messages.map((m) => `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div></div>`).join('')
-    : '<div class="cust-chat-hello">你好，我是 AI 导购助手。可以根据人数、时间和偏好推荐桌游、查询当前空桌；预约需要你在页面表单里亲自提交。</div>';
+    ? messages.map((m) => {
+        const sources = Array.isArray(m.sources) && m.sources.length
+          ? `<div class="ai-sources"><span class="ai-sources__label">📚 知识库依据</span>${m.sources.map((s) => `<span class="ai-source-chip">${escapeHtml(s.title)}</span>`).join('')}</div>`
+          : '';
+        return `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div>${sources}</div>`;
+      }).join('')
+    : '<div class="cust-chat-hello">你好，我是 AI 导购助手。可以问我桌游怎么玩、规则、推荐，也能查当前空桌；预约需要你在页面表单里亲自提交。</div>';
   return `
     <div class="cust-chat ${open ? 'is-open' : ''}">
       ${open ? `
@@ -3481,7 +3486,7 @@ async function onCustChatSend() {
     });
     state.customerGuideGames = result.recommendedGames || [];
     state.customerGuideTables = result.availableTables || [];
-    state.custChatMessages.push({ role: 'assistant', content: result.reply || '（无回答）' });
+    state.custChatMessages.push({ role: 'assistant', content: result.reply || '（无回答）', sources: result.sources || [] });
   } catch (e) {
     state.custChatMessages.push({ role: 'assistant', content: `抱歉，出错了：${e.message}` });
   } finally {

@@ -3663,3 +3663,29 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     grid-template-columns: 1fr;
   }
 }
+
+/* RAG 知识库出处引用 — 顾客 AI 客服气泡下方的「依据」标签 */
+.ai-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 2px;
+}
+.ai-sources__label {
+  font-size: 11px;
+  color: var(--text-soft, #86868b);
+  font-weight: 600;
+}
+.ai-source-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #c2410c;
+  background: #fff1e6;
+  border: 1px solid #fcd9b6;
+}
