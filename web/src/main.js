@@ -1590,23 +1590,13 @@ function renderCustomerRecordModal() {
 function renderCustomerGuideHighlights() {
   const games = state.customerGuideGames || [];
   const tables = state.customerGuideTables || [];
-  if (!games.length && !tables.length) {
-    return `
-      <section class="neon-guide-card">
-        <div>
-          <span class="neon-eyebrow">AI GUIDE</span>
-          <h3>问问 AI：今晚适合玩什么？</h3>
-          <p>告诉我人数、时间、偏好，我会先查数据库里的桌游和空桌，再给你推荐方案。预约仍需要你亲自提交。</p>
-        </div>
-        <button class="btn btn-primary rounded-full" id="btn-cust-chat-open-inline" type="button">打开智能导购</button>
-      </section>`;
-  }
+  if (!games.length && !tables.length) return '';
   return `
-    <section class="neon-guide-card neon-guide-card--active">
+    <section class="ai-guide-summary">
       <div>
-        <span class="neon-eyebrow">AI GUIDE RESULT</span>
-        <h3>智能导购结果</h3>
-        <p>根据当前人数、时间和偏好，AI 工具层已查询可选桌游与空桌。</p>
+        <span class="neon-eyebrow">AI RECOMMENDATION</span>
+        <h3>AI 导购摘要</h3>
+        <p>根据你刚才的问题，系统已查询店内桌游和当前空桌。预约仍需要你在左侧表单确认后提交。</p>
       </div>
       <div class="neon-guide-lists">
         <div>
@@ -1630,8 +1620,8 @@ function renderCustomerBookingPage() {
       <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 20% 30%, #fff 0, transparent 40%), radial-gradient(circle at 80% 70%, #fff 0, transparent 35%)"></div>
       <div class="relative max-w-7xl mx-auto px-5 sm:px-8 py-7 sm:py-9">
         <div class="neon-eyebrow">BOARDGAME NIGHT OPS</div>
-        <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight tracking-tight">AI 智能预约与桌游导购</h2>
-        <p class="mt-2 max-w-2xl text-sm sm:text-base text-white/85">选好人数和时间，系统匹配桌位；也可以先看看榜单、可租借桌游和店内目录。</p>
+        <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight tracking-tight">预约开局</h2>
+        <p class="mt-2 max-w-2xl text-sm sm:text-base text-white/85">选好人数和时间，系统匹配桌位；不确定玩什么，可以问右下角 AI 导购助手。</p>
         <div class="mt-4 flex flex-wrap gap-2 text-xs sm:text-sm font-semibold">
           <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${games.length} 款桌游</span>
           <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${(state.leaderboard || []).length} 位上榜玩家</span>
@@ -1711,7 +1701,7 @@ function renderCustomerBookingPage() {
           <div class="flex items-baseline justify-between gap-4 mb-4">
             <div>
               <h3 class="m-0 text-2xl font-bold tracking-tight">桌游目录</h3>
-              <p class="m-0 mt-1 text-sm text-base-content/55">不知道玩什么，或想看当前空桌，可以问右下角 AI 客服。</p>
+              <p class="m-0 mt-1 text-sm text-base-content/55">不知道玩什么，或想看当前空桌，可以问右下角 AI 导购助手。</p>
             </div>
             <span class="shrink-0 text-sm text-base-content/50">${games.length} 款</span>
           </div>
@@ -1742,28 +1732,28 @@ function renderPublicCustomerShell() {
     ${renderCustomerChatWidget()}`;
 }
 
-// 顾客客服气泡
+// 顾客 AI 导购气泡
 function renderCustomerChatWidget() {
   const open = state.custChatOpen;
   const messages = state.custChatMessages || [];
   const bubbles = messages.length
     ? messages.map((m) => `<div class="ai-msg ai-msg--${m.role}"><div class="ai-bubble">${escapeHtml(m.content)}</div></div>`).join('')
-    : '<div class="cust-chat-hello">你好！我是 AI 客服，可以推荐桌游、查询当前空桌；预约需要你在页面表单里亲自提交 🎲</div>';
+    : '<div class="cust-chat-hello">你好，我是 AI 导购助手。可以根据人数、时间和偏好推荐桌游、查询当前空桌；预约需要你在页面表单里亲自提交。</div>';
   return `
     <div class="cust-chat ${open ? 'is-open' : ''}">
       ${open ? `
         <div class="cust-chat-window">
-          <div class="cust-chat-head"><strong>AI 客服</strong><button class="cust-chat-close" id="btn-cust-chat-close" type="button">×</button></div>
+          <div class="cust-chat-head"><strong>AI 导购助手</strong><button class="cust-chat-close" id="btn-cust-chat-close" type="button">×</button></div>
           <div class="cust-chat-log" id="cust-chat-log">
             ${bubbles}
             ${state.custChatLoading ? '<div class="ai-msg ai-msg--assistant"><div class="ai-bubble ai-typing"><span class="loading loading-dots loading-sm"></span> 输入中</div></div>' : ''}
           </div>
           <div class="cust-chat-input">
-            <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问桌游推荐 / 当前空桌…" value="${escapeAttr(state.custChatInput || '')}" />
+            <input class="input" id="cust-chat-input" data-field="custChatInput" placeholder="问推荐 / 空桌 / 预约流程…" value="${escapeAttr(state.custChatInput || '')}" />
             <button class="btn btn-primary btn-sm" id="btn-cust-chat-send" type="button" ${state.custChatLoading ? 'disabled' : ''}>发送</button>
           </div>
         </div>` : ''}
-      <button class="cust-chat-fab" id="btn-cust-chat-toggle" type="button">${open ? '收起' : '💬 AI 客服'}</button>
+      <button class="cust-chat-fab" id="btn-cust-chat-toggle" type="button">${open ? '收起' : 'AI 导购'}</button>
     </div>`;
 }
 
@@ -2596,7 +2586,6 @@ function bind() {
 
   // ---- Customer chat widget ----
   $('#btn-cust-chat-toggle')?.addEventListener('click', () => { state.custChatOpen = !state.custChatOpen; render(); });
-  $('#btn-cust-chat-open-inline')?.addEventListener('click', () => { state.custChatOpen = true; render(); });
   $('#btn-cust-chat-close')?.addEventListener('click', () => { state.custChatOpen = false; render(); });
   $('#btn-cust-chat-send')?.addEventListener('click', () => void onCustChatSend());
   $('#cust-chat-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void onCustChatSend(); } });
