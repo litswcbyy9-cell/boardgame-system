@@ -1376,33 +1376,35 @@ function renderCustomerRentalPanel() {
 
 function renderCustomerGameCatalog(games) {
   if (!games.length) {
-    return '<div class="rounded-3xl border border-dashed border-base-300 bg-base-100 p-8 text-center text-base-content/55">暂无公开桌游。请在后台“桌游目录”添加或检查生产数据库数据。</div>';
+    return '<div class="customer-empty-state">暂无公开桌游。请在后台“桌游目录”添加或检查生产数据库数据。</div>';
   }
   const expanded = Boolean(state.customerCatalogExpanded);
   const visibleGames = expanded ? games : games.slice(0, 6);
   return `
-    <div class="space-y-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+    <div class="customer-catalog-stack">
+      <div class="customer-game-grid">
         ${visibleGames.map((g) => `
-          <article class="card bg-base-100 shadow-md rounded-3xl overflow-hidden border border-base-300/50 transition-all hover:-translate-y-1 hover:shadow-xl">
-            <figure class="aspect-[4/3] overflow-hidden bg-base-300">
+          <article class="customer-game-card">
+            <figure class="customer-game-cover">
               ${renderGameCover(g, 'w-full h-full object-cover')}
             </figure>
-            <div class="card-body p-4 gap-2">
-              <h4 class="font-bold text-base leading-tight">${escapeHtml(g.title)}</h4>
-              <div class="flex flex-wrap gap-1.5">
-                <span class="badge badge-sm badge-primary badge-outline rounded-full">${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
-                <span class="badge badge-sm badge-secondary badge-outline rounded-full">${g.avg_minutes || g.avgMinutes || 90}分钟</span>
-                <span class="badge badge-sm badge-ghost rounded-full">${customerDifficulty(g)}</span>
-                <span class="badge badge-sm badge-ghost rounded-full">热度 ${Number(g.hotScore || 0).toFixed(0)}</span>
+            <div class="customer-game-body">
+              <div class="customer-game-title-row">
+                <h4>${escapeHtml(g.title)}</h4>
+                <span>${Number(g.hotScore || 0).toFixed(0)}</span>
               </div>
-              <p class="m-0 text-xs text-base-content/50">近30天 ${g.recentPlayCount || 0} 次 · 总计 ${g.playCount || 0} 次</p>
-              ${g.description ? `<p class="text-sm text-base-content/60 line-clamp-3">${escapeHtml(g.description)}</p>` : ''}
+              <div class="customer-game-meta">
+                <span>${g.min_players || g.minPlayers || 2}-${g.max_players || g.maxPlayers || 6}人</span>
+                <span>${g.avg_minutes || g.avgMinutes || 90}分钟</span>
+                <span>${customerDifficulty(g)}</span>
+              </div>
+              <p class="customer-game-stats">近30天 ${g.recentPlayCount || 0} 次 · 总计 ${g.playCount || 0} 次</p>
+              ${g.description ? `<p class="customer-game-desc line-clamp-3">${escapeHtml(g.description)}</p>` : ''}
             </div>
           </article>`).join('')}
       </div>
       ${games.length > 6 ? `
-        <button class="btn btn-outline btn-primary w-full rounded-2xl" data-customer-catalog-toggle type="button">
+        <button class="btn btn-outline btn-primary w-full rounded-2xl customer-catalog-toggle" data-customer-catalog-toggle type="button">
           ${expanded ? '收起桌游目录' : `展开全部 ${games.length} 款桌游`}
         </button>
       ` : ''}
@@ -1614,100 +1616,129 @@ function renderCustomerGuideHighlights() {
 function renderCustomerBookingPage() {
   const selectedTable = state.customerMatches.find((table) => Number(table.tableId) === Number(state.customerSelectedTableId));
   const games = state.games || [];
+  const leaderboardCount = (state.leaderboard || []).length;
+  const rentalCount = (state.publicRentalGames || []).length;
 
   return `
-    <section class="customer-neon-hero relative overflow-hidden text-white">
-      <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 20% 30%, #fff 0, transparent 40%), radial-gradient(circle at 80% 70%, #fff 0, transparent 35%)"></div>
-      <div class="relative max-w-7xl mx-auto px-5 sm:px-8 py-7 sm:py-9">
-        <div class="neon-eyebrow">BOARDGAME NIGHT OPS</div>
-        <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight tracking-tight">预约开局</h2>
-        <p class="mt-2 max-w-2xl text-sm sm:text-base text-white/85">选好人数和时间，系统匹配桌位；不确定玩什么，可以问右下角 AI 导购助手。</p>
-        <div class="mt-4 flex flex-wrap gap-2 text-xs sm:text-sm font-semibold">
-          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${games.length} 款桌游</span>
-          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${(state.leaderboard || []).length} 位上榜玩家</span>
-          <span class="rounded-full bg-white/15 px-3 py-1 backdrop-blur">${(state.publicRentalGames || []).length} 款可借</span>
+    <section class="customer-neon-hero customer-hero-v2 relative overflow-hidden text-white">
+      <div class="customer-hero-glow" aria-hidden="true"></div>
+      <div class="customer-hero-shell">
+        <div class="min-w-0">
+          <div class="neon-eyebrow">BOARDGAME NIGHT OPS</div>
+          <h2>预约开局</h2>
+          <p>选好人数和时间，系统匹配桌位；右侧可以先看榜单、租借和店内桌游目录。</p>
+        </div>
+        <div class="customer-hero-stats">
+          <span><b>${games.length}</b>款桌游</span>
+          <span><b>${leaderboardCount}</b>位上榜玩家</span>
+          <span><b>${rentalCount}</b>款可借</span>
         </div>
       </div>
     </section>
 
-    <div class="max-w-7xl mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-[390px_minmax(0,1fr)] gap-8 items-start">
-      <aside class="space-y-5 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
-        ${renderCustomerAccountPanel()}
-        <section class="card bg-base-100 shadow-xl rounded-3xl border border-base-300/60">
-        <div class="card-body p-6 gap-3">
-          <h3 class="text-xl font-bold tracking-tight">${state.customerResult ? '预约成功' : '填写预约信息'}</h3>
-          ${state.customerResult
-            ? `<div class="alert alert-success rounded-2xl">
-                <div>
-                  <div class="font-bold">预约已提交 #${state.customerResult.reservationId}</div>
-                  <div class="text-sm opacity-90">${escapeHtml(state.customerResult.tableCode || '')} ${state.customerResult.seatCapacity || ''}人桌，请按时到店。</div>
-                </div>
-              </div>`
-            : ''}
-          <label class="form-control w-full">
-            <span class="label-text text-sm font-semibold mb-1">姓名</span>
-            <input class="input input-bordered w-full rounded-xl" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" placeholder="您的称呼" />
-          </label>
-          <label class="form-control w-full">
-            <span class="label-text text-sm font-semibold mb-1">电话</span>
-            <input class="input input-bordered w-full rounded-xl" type="tel" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" placeholder="方便联系" />
-          </label>
-          <label class="form-control w-full">
-            <span class="label-text text-sm font-semibold mb-1">人数</span>
-            <input class="input input-bordered w-full rounded-xl" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" />
-          </label>
-          <div class="grid grid-cols-1 gap-3">
-            <label class="form-control min-w-0">
-              <span class="label-text text-sm font-semibold mb-1">到店时间</span>
-              <input class="input input-bordered w-full rounded-xl customer-date-input" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" />
-            </label>
-            <label class="form-control min-w-0">
-              <span class="label-text text-sm font-semibold mb-1">离店时间</span>
-              <input class="input input-bordered w-full rounded-xl customer-date-input" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" />
-            </label>
-          </div>
-          ${!state.customerResult ? `
-            <button class="btn btn-outline btn-primary w-full rounded-xl mt-1" data-customer-match type="button">查找可用桌位</button>
-            ${state.customerMatches.length > 0 ? `
-              <div class="mt-2">
-                <div class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-2">${state.customerMatches.length} 个可用桌位</div>
-                <div class="grid grid-cols-2 gap-2">
-                  ${state.customerMatches.map((t) => {
-                    const active = Number(t.tableId) === Number(state.customerSelectedTableId);
-                    return `<button data-customer-table="${t.tableId}" type="button" class="rounded-2xl border-2 p-3 text-left transition ${active ? 'border-primary bg-primary/10' : 'border-base-300 hover:border-primary/50'}">
-                      <div class="font-bold">${escapeHtml(t.code)}</div>
-                      <div class="text-xs text-base-content/60">${t.seatCapacity}人桌 · ${escapeHtml(t.areaType || 'standard')}</div>
-                    </button>`;
-                  }).join('')}
-                </div>
-                <button class="btn btn-primary w-full rounded-xl mt-3 border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-lg hover:opacity-90" data-customer-submit type="button">
-                  ${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}
-                </button>
-              </div>
-            ` : ''}
-          ` : ''}
-        </div>
-        </section>
-      </aside>
-
-      <main class="min-w-0 space-y-6">
-        ${renderCustomerGuideHighlights()}
-        ${renderCustomerReservationsPanel()}
-        <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
-          ${renderCustomerLeaderboardPanel()}
-          ${renderCustomerRentalPanel()}
-        </section>
-        <section>
-          <div class="flex items-baseline justify-between gap-4 mb-4">
+    <div class="customer-studio">
+      <div class="customer-studio-grid">
+        <aside class="customer-reservation-rail">
+          <div class="customer-rail-intro">
+            <span>01</span>
             <div>
-              <h3 class="m-0 text-2xl font-bold tracking-tight">桌游目录</h3>
-              <p class="m-0 mt-1 text-sm text-base-content/55">不知道玩什么，或想看当前空桌，可以问右下角 AI 导购助手。</p>
+              <h3>预约信息</h3>
+              <p>填写到店时间后先查空桌，再确认提交。</p>
             </div>
-            <span class="shrink-0 text-sm text-base-content/50">${games.length} 款</span>
           </div>
-          ${renderCustomerGameCatalog(games)}
-        </section>
-      </main>
+          ${renderCustomerAccountPanel()}
+          <section class="customer-panel customer-booking-panel">
+            <div class="customer-panel-head">
+              <div>
+                <span class="customer-panel-kicker">${state.customerResult ? 'RESERVED' : 'BOOKING'}</span>
+                <h3>${state.customerResult ? '预约成功' : '选择时间与桌位'}</h3>
+              </div>
+            </div>
+            ${state.customerResult
+              ? `<div class="alert alert-success rounded-2xl">
+                  <div>
+                    <div class="font-bold">预约已提交 #${state.customerResult.reservationId}</div>
+                    <div class="text-sm opacity-90">${escapeHtml(state.customerResult.tableCode || '')} ${state.customerResult.seatCapacity || ''}人桌，请按时到店。</div>
+                  </div>
+                </div>`
+              : ''}
+            <div class="customer-form-grid">
+              <label class="form-control w-full">
+                <span class="label-text text-sm font-semibold mb-1">姓名</span>
+                <input class="input input-bordered w-full rounded-xl" data-field="customerGuestName" value="${escapeAttr(state.customerGuestName)}" placeholder="您的称呼" />
+              </label>
+              <label class="form-control w-full">
+                <span class="label-text text-sm font-semibold mb-1">电话</span>
+                <input class="input input-bordered w-full rounded-xl" type="tel" data-field="customerPhone" value="${escapeAttr(state.customerPhone)}" placeholder="方便联系" />
+              </label>
+              <label class="form-control w-full customer-party-field">
+                <span class="label-text text-sm font-semibold mb-1">人数</span>
+                <input class="input input-bordered w-full rounded-xl" type="number" min="1" max="20" data-field="customerPartySize" value="${escapeAttr(state.customerPartySize)}" />
+              </label>
+              <label class="form-control min-w-0">
+                <span class="label-text text-sm font-semibold mb-1">到店时间</span>
+                <input class="input input-bordered w-full rounded-xl customer-date-input" type="datetime-local" data-field="customerStartAt" value="${escapeAttr(state.customerStartAt)}" />
+              </label>
+              <label class="form-control min-w-0">
+                <span class="label-text text-sm font-semibold mb-1">离店时间</span>
+                <input class="input input-bordered w-full rounded-xl customer-date-input" type="datetime-local" data-field="customerEndAt" value="${escapeAttr(state.customerEndAt)}" />
+              </label>
+            </div>
+            ${!state.customerResult ? `
+              <button class="btn btn-outline btn-primary w-full rounded-2xl customer-match-button" data-customer-match type="button">查找可用桌位</button>
+              ${state.customerMatches.length > 0 ? `
+                <div class="customer-table-matches">
+                  <div class="customer-match-title">${state.customerMatches.length} 个可用桌位</div>
+                  <div class="customer-table-grid">
+                    ${state.customerMatches.map((t) => {
+                      const active = Number(t.tableId) === Number(state.customerSelectedTableId);
+                      return `<button data-customer-table="${t.tableId}" type="button" class="customer-table-option ${active ? 'is-active' : ''}">
+                        <strong>${escapeHtml(t.code)}</strong>
+                        <span>${t.seatCapacity}人桌 · ${escapeHtml(t.areaType || 'standard')}</span>
+                      </button>`;
+                    }).join('')}
+                  </div>
+                  <button class="btn btn-primary w-full rounded-2xl border-0 bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-lg hover:opacity-90" data-customer-submit type="button">
+                    ${selectedTable ? `预约 ${escapeHtml(selectedTable.code)}` : '自动分配并预约'}
+                  </button>
+                </div>
+              ` : ''}
+            ` : ''}
+          </section>
+        </aside>
+
+        <main class="customer-discovery">
+          <section class="customer-panel customer-discovery-hero">
+            <div>
+              <span class="customer-panel-kicker">DISCOVER</span>
+              <h3>先选玩法，再定桌位</h3>
+              <p>右侧内容都来自后台数据：热门玩家、可租借副本和店内桌游目录会随数据自动更新。</p>
+            </div>
+            <div class="customer-discovery-metrics">
+              <span><b>${games.length}</b>桌游</span>
+              <span><b>${rentalCount}</b>可借</span>
+              <span><b>${leaderboardCount}</b>玩家</span>
+            </div>
+          </section>
+          ${renderCustomerGuideHighlights()}
+          ${renderCustomerReservationsPanel()}
+          <section class="customer-side-grid">
+            ${renderCustomerLeaderboardPanel()}
+            ${renderCustomerRentalPanel()}
+          </section>
+          <section class="customer-catalog-section">
+            <div class="customer-section-head">
+              <div>
+                <span class="customer-panel-kicker">CATALOG</span>
+                <h3>桌游目录</h3>
+                <p>不知道玩什么，或想看当前空桌，可以问右下角 AI 导购助手。</p>
+              </div>
+              <span>${games.length} 款</span>
+            </div>
+            ${renderCustomerGameCatalog(games)}
+          </section>
+        </main>
+      </div>
     </div>`;
 }
 
