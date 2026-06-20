@@ -2413,7 +2413,7 @@ async function render() {
           </div>
         </header>
         ${state.err ? `<div class="notice mx-5 sm:mx-7 mt-4">${escapeHtml(state.err)}</div>` : ''}
-        <div class="px-5 sm:px-7 pb-10">${pageContent}</div>
+        <div class="px-5 sm:px-7 pb-10 page-enter" data-page-key="${escapeAttr(page.id)}">${pageContent}</div>
       </main>
       ${renderMobileNav()}
       ${renderPetWidget()}
