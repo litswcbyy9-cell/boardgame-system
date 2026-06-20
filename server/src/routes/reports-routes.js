@@ -1,0 +1,102 @@
+import { buildGameReason, buildTableReason, parseDateInput, toMysqlDatetime, toPositiveInt } from './route-utils.js';
+
+export function registerReportsRoutes(app, ctx) {
+  const { pool, sendError } = ctx;
+
+  app.get('/api/recommendations/games', async (req, res) => {  
+    const playerId = req.query.playerId ? Number(req.query.playerId) : null;  
+    const partySize = toPositiveInt(req.query.partySize, 4, 20);  
+    const minutes = toPositiveInt(req.query.minutes, 120, 600);  
+    const category = String(req.query.category || '').trim();  
+    
+    if (req.query.playerId && (!Number.isFinite(playerId) || playerId <= 0)) {  
+      return sendError(res, 400, 'invalid_player_id');  
+    }  
+    
+    const [sets] = await pool.query('CALL sp_recommend_games(?, ?, ?, ?)', [playerId, partySize, minutes, category]);  
+    const rows = sets[0] || [];  
+    res.json(  
+      rows.map((row) => ({  
+        gameId: row.game_id,  
+        title: row.title,  
+        coverImageUrl: row.cover_image_url,  
+        minPlayers: row.min_players,  
+        maxPlayers: row.max_players,  
+        category: row.category,  
+        difficultyLevel: row.difficulty_level,  
+        avgMinutes: row.avg_minutes,  
+        totalPlayRecords: row.total_play_records,  
+        recent30Records: row.recent_30_records,  
+        score: Number(row.score),  
+        scores: {  
+          people: Number(row.people_score),  
+          duration: Number(row.duration_score),  
+          category: Number(row.category_score),  
+          history: Number(row.history_score),  
+          hot: Number(row.hot_score),  
+          weight: Number(row.weight_score),  
+        },  
+        reason: buildGameReason(row, { partySize, minutes, category }),  
+      }))  
+    );  
+  });  
+    
+  app.get('/api/recommendations/tables', async (req, res) => {  
+    const partySize = toPositiveInt(req.query.partySize, 4, 20);  
+    const now = new Date();  
+    const startDate = parseDateInput(req.query.startAt, now);  
+    const endDate = parseDateInput(req.query.endAt, new Date(startDate ? startDate.getTime() + 2 * 3600000 : now.getTime() + 2 * 3600000));  
+    
+    if (!startDate || !endDate) {  
+      return sendError(res, 400, 'invalid_time');  
+    }  
+    if (startDate >= endDate) {  
+      return sendError(res, 400, 'invalid_time_range');  
+    }  
+    
+    const [sets] = await pool.query('CALL sp_recommend_tables(?, ?, ?)', [  
+      partySize,  
+      toMysqlDatetime(startDate),  
+      toMysqlDatetime(endDate),  
+    ]);  
+    const rows = sets[0] || [];  
+    res.json(  
+      rows.map((row) => ({  
+        tableId: row.table_id,  
+        code: row.code,  
+        seatCapacity: row.seat_capacity,  
+        areaType: row.area_type,  
+        posX: row.pos_x,  
+        posY: row.pos_y,  
+        status: row.status,  
+        recentSessions: row.recent_sessions,  
+        score: Number(row.score),  
+        scores: {  
+          capacity: Number(row.capacity_score),  
+          availability: Number(row.availability_score),  
+          utilization: Number(row.utilization_score),  
+        },  
+        reason: buildTableReason(row, partySize),  
+      }))  
+    );  
+  });  
+    
+  app.get('/api/reports/revenue', async (req, res) => {  
+    const d = req.query.date || new Date().toISOString().slice(0, 10);  
+    const [sets] = await pool.query('CALL sp_report_daily_revenue(?)', [d]);  
+    const rows = sets[0] || [];  
+    res.json(rows[0] || null);  
+  });  
+    
+  app.get('/api/reports/game-popularity', async (req, res) => {  
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));  
+    const [sets] = await pool.query('CALL sp_report_game_popularity(?)', [days]);  
+    res.json(sets[0] || []);  
+  });  
+    
+  app.get('/api/reports/table-utilization', async (req, res) => {  
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));  
+    const [sets] = await pool.query('CALL sp_report_table_utilization(?)', [days]);  
+    res.json(sets[0] || []);  
+  });
+}

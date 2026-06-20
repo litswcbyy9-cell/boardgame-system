@@ -12,7 +12,7 @@
     "build": "npm run build -w web",
     "test": "npm run test -w server",
     "test:api": "npm run test:api -w server",
-    "test:e2e": "echo \"E2E smoke tests are documented for manual deployment checks.\"",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
     "db:check": "node scripts/db-check.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "deploy:check": "node scripts/predeploy-check.mjs",

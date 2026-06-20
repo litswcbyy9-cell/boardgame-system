@@ -1,4 +1,5 @@
 import { pool } from './db.js';
+import { logger } from './logger.js';
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SENSITIVE_KEYS = new Set(['password', 'token', 'authorization', 'password_hash', 'passwordHash']);
@@ -49,7 +50,7 @@ function clientIp(req) {
 
 async function writeAuditLog(req, res) {
   const pathname = canonicalApiPath(req);
-  const tenantId = req.tenant?.id || null;
+  const tenantId = req.user?.tenantId || req.tenant?.id || 1;
   await pool.query(
     `INSERT INTO audit_logs
       (tenant_id, user_id, action, resource_type, resource_id, request_method, request_path,
@@ -78,13 +79,13 @@ export function auditSuccessfulWrites(req, res, next) {
   res.on('finish', () => {
     if (res.statusCode >= 200 && res.statusCode < 400) {
       writeAuditLog(req, res).catch((error) => {
-        console.error(JSON.stringify({
+        logger.warn({
           level: 'warn',
           event: 'audit_log_failed',
           at: new Date().toISOString(),
           requestId: req.requestId,
           message: error.message,
-        }));
+        }, 'audit_log_failed');
       });
     }
   });

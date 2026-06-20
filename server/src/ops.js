@@ -68,8 +68,15 @@ export async function getHealthSnapshot() {
     migrationStatus = { error: error.message };
   }
   const llm = llmInfo();
+  const migrationsHealthy = Boolean(
+    migrationStatus &&
+    !migrationStatus.error &&
+    migrationStatus.tableExists &&
+    (migrationStatus.pending?.length || 0) === 0 &&
+    (migrationStatus.failed?.length || 0) === 0
+  );
   return {
-    ok: db && !migrationStatus?.error,
+    ok: db && migrationsHealthy,
     db,
     migrations: migrationStatus
       ? {
@@ -78,6 +85,7 @@ export async function getHealthSnapshot() {
           applied: migrationStatus.applied || 0,
           pending: migrationStatus.pending?.length || 0,
           failed: migrationStatus.failed?.length || 0,
+          healthy: migrationsHealthy,
         }
       : null,
     ai: {

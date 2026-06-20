@@ -18,6 +18,16 @@ export const publicRegisterSchema = z.object({
   password: z.string().min(PASSWORD_MIN_LENGTH),
 });
 
+export const adminLoginSchema = z.object({
+  username: z.string().trim().toLowerCase().min(1),
+  password: z.string().min(1),
+});
+
+export const publicLoginSchema = z.object({
+  phone: z.string().trim().min(1),
+  password: z.string().min(1),
+});
+
 export const staffMutationSchema = z.object({
   username: z.string().trim().min(3).max(32).optional(),
   displayName: z.string().trim().min(1).optional(),

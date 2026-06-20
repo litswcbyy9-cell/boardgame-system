@@ -12,7 +12,20 @@ import {
   requirePlayerAuth,
 } from '../auth.js';
 import { hashPassword, hashToken, verifyPassword } from '../security.js';
-import { strongPassword } from '../validation.js';
+import {
+  adminLoginSchema,
+  adminRegisterSchema,
+  publicLoginSchema,
+  publicRegisterSchema,
+} from '../validation.js';
+
+function authValidationError(res, parsed, passwordCode = 'weak_password') {
+  const fields = new Set(parsed.error.issues.map((issue) => issue.path[0]));
+  if (fields.has('password')) return sendError(res, 400, passwordCode);
+  if (fields.has('username')) return sendError(res, 400, 'invalid_username');
+  if (fields.has('phone')) return sendError(res, 400, 'invalid_phone');
+  return sendError(res, 400, 'missing_fields');
+}
 
 export function registerAuthRoutes(app) {
   app.post('/api/auth/register', async (req, res) => {
@@ -20,16 +33,10 @@ export function registerAuthRoutes(app) {
       return sendError(res, 403, 'registration_disabled');
     }
 
-    const { username, password, displayName } = req.body || {};
-    const normalizedUsername = String(username || '').trim().toLowerCase();
-    const normalizedDisplayName = String(displayName || username || '').trim();
-
-    if (!/^[a-zA-Z0-9_]{3,32}$/.test(normalizedUsername)) {
-      return sendError(res, 400, 'invalid_username');
-    }
-    if (!strongPassword(password)) {
-      return sendError(res, 400, 'weak_password');
-    }
+    const parsed = adminRegisterSchema.safeParse(req.body || {});
+    if (!parsed.success) return authValidationError(res, parsed);
+    const { username: normalizedUsername, password, displayName } = parsed.data;
+    const normalizedDisplayName = String(displayName || normalizedUsername).trim();
 
     const conn = await pool.getConnection();
     try {
@@ -72,8 +79,9 @@ export function registerAuthRoutes(app) {
   });
 
   app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body || {};
-    const normalizedUsername = String(username || '').trim().toLowerCase();
+    const parsed = adminLoginSchema.safeParse(req.body || {});
+    if (!parsed.success) return sendError(res, 401, 'invalid_credentials');
+    const { username: normalizedUsername, password } = parsed.data;
     const [[row]] = await pool.query(
       `SELECT u.id, u.username, u.display_name, u.password_hash, u.role, u.staff_id,
               sp.employee_no, sp.full_name, sp.phone AS staff_phone, sp.position
@@ -105,13 +113,9 @@ export function registerAuthRoutes(app) {
   });
 
   app.post('/api/public/auth/register', async (req, res) => {
-    const displayName = String(req.body?.displayName || '').trim();
-    const phone = String(req.body?.phone || '').trim();
-    const password = String(req.body?.password || '');
-
-    if (!displayName || !phone || !password) return sendError(res, 400, 'missing_fields');
-    if (!/^[0-9+\-\s]{6,32}$/.test(phone)) return sendError(res, 400, 'invalid_phone');
-    if (!strongPassword(password)) return sendError(res, 400, 'weak_password');
+    const parsed = publicRegisterSchema.safeParse(req.body || {});
+    if (!parsed.success) return authValidationError(res, parsed);
+    const { displayName, phone, password } = parsed.data;
 
     const conn = await pool.getConnection();
     let playerId = null;
@@ -169,8 +173,9 @@ export function registerAuthRoutes(app) {
   });
 
   app.post('/api/public/auth/login', async (req, res) => {
-    const phone = String(req.body?.phone || '').trim();
-    const password = String(req.body?.password || '');
+    const parsed = publicLoginSchema.safeParse(req.body || {});
+    if (!parsed.success) return sendError(res, 401, 'invalid_credentials');
+    const { phone, password } = parsed.data;
     const [[row]] = await pool.query(
       `SELECT id, member_no, display_name, phone, avatar_url, password_hash
        FROM players
