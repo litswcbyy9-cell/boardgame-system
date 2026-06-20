@@ -1066,11 +1066,24 @@ function renderAuthScreen() {
     </div>`;
 }
 
-const navEmoji = {
-  dashboard: '📊', tables: '🪑', members: '👥', staff: '🧑‍💼', recommend: '✨',
-  sessions: '🎮', reports: '📈', games: '🎲', coupons: '🎟️', billing: '💳',
-  rental: '📦', 'staff-mgmt': '🔐', ai: '🤖',
+const navIcons = {
+  dashboard: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Z"/><path d="M14 20h6V4h-6v16Z"/><path d="M4 20h6v-3H4v3Z"/></svg>',
+  tables: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10h14"/><path d="M7 10v8"/><path d="M17 10v8"/><path d="M8 6h8a3 3 0 0 1 3 3v1H5V9a3 3 0 0 1 3-3Z"/></svg>',
+  members: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><path d="M9.5 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M17 11a2.5 2.5 0 0 0 0-5"/><path d="M21 20v-1.5a3.5 3.5 0 0 0-2.5-3.35"/></svg>',
+  staff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 20a8 8 0 0 1 16 0"/><path d="M15 7h3"/><path d="M16.5 5.5v3"/></svg>',
+  sessions: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7V7Z"/><path d="M4 4h3v3H4V4Z"/><path d="M17 4h3v3h-3V4Z"/><path d="M4 17h3v3H4v-3Z"/><path d="M17 17h3v3h-3v-3Z"/></svg>',
+  reports: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15l3-4 3 2 5-7"/></svg>',
+  games: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5V5Z"/><path d="M8.5 8.5h.01"/><path d="M15.5 8.5h.01"/><path d="M12 12h.01"/><path d="M8.5 15.5h.01"/><path d="M15.5 15.5h.01"/></svg>',
+  coupons: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 1 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 1 0 0-4V8Z"/><path d="M9 9h.01"/><path d="M15 15h.01"/><path d="M15 9l-6 6"/></svg>',
+  billing: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4V7Z"/><path d="M4 10h16"/><path d="M8 15h3"/></svg>',
+  rental: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8l7-4 7 4-7 4-7-4Z"/><path d="M5 8v8l7 4 7-4V8"/><path d="M12 12v8"/></svg>',
+  'staff-mgmt': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M5 21a7 7 0 0 1 14 0"/><path d="M18 8l1.5 1.5L22 7"/></svg>',
+  ai: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v2"/><path d="M7 8h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3Z"/><path d="M9 13h.01"/><path d="M15 13h.01"/><path d="M9 16h6"/></svg>',
 };
+
+function renderNavIcon(id) {
+  return navIcons[id] || '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
+}
 
 function renderNav() {
   const collapsed = state.sidebarCollapsed;
@@ -1080,11 +1093,9 @@ function renderNav() {
       return `
         <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
           title="${escapeAttr(item.label)}"
-          class="flex items-center min-h-11 ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-3'} py-2.5 rounded-xl text-sm font-medium transition ${active
-            ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
-            : 'text-white/75 hover:text-white hover:bg-white/10'}">
-          <span class="grid place-items-center w-6 h-6 shrink-0 text-[17px] leading-none">${navEmoji[item.id] || '•'}</span>
-          ${collapsed ? '' : `<span class="truncate">${escapeHtml(item.label)}</span>`}
+          class="admin-nav-link ${active ? 'is-active' : ''} ${collapsed ? 'is-collapsed' : ''}">
+          <span class="admin-nav-icon">${renderNavIcon(item.id)}</span>
+          ${collapsed ? '' : `<span class="admin-nav-label">${escapeHtml(item.label)}</span>`}
         </a>`;
     })
     .join('');
@@ -1111,10 +1122,8 @@ function renderMobileNav() {
             const active = state.activePage === item.id;
             return `
               <a href="#/${item.id}" data-page="${item.id}" ${active ? 'aria-current="page"' : ''}
-                class="flex items-center gap-3 min-h-12 px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition ${active
-                  ? 'bg-gradient-to-r from-orange-500 to-purple-600 text-white shadow-md shadow-purple-500/20'
-                  : 'text-base-content/75 hover:text-base-content hover:bg-base-200'}">
-                <span class="grid place-items-center w-7 h-7 shrink-0 text-[19px] leading-none">${navEmoji[item.id] || '•'}</span>
+                class="mobile-nav-link ${active ? 'is-active' : ''}">
+                <span class="mobile-nav-icon">${renderNavIcon(item.id)}</span>
                 <span class="truncate">${escapeHtml(item.label)}</span>
               </a>`;
           }).join('')}
@@ -1672,7 +1681,6 @@ function renderCustomerBookingPage() {
               <p>填写到店时间后先查空桌，再确认提交。</p>
             </div>
           </div>
-          ${renderCustomerAccountPanel()}
           <section class="customer-panel customer-booking-panel">
             <div class="customer-panel-head">
               <div>
@@ -1731,6 +1739,7 @@ function renderCustomerBookingPage() {
               ` : ''}
             ` : ''}
           </section>
+          ${renderCustomerAccountPanel()}
         </aside>
 
         <main class="customer-discovery">
@@ -2394,28 +2403,29 @@ async function render() {
   const pageContent = await renderPageContent(summary);
   const hasOwnHeader = page.id === 'games' || page.id === 'staff-mgmt' || page.id === 'coupons' || page.id === 'billing' || page.id === 'rental' || page.id === 'ai';
   $('#app').innerHTML = `
-    <div data-theme="bgcafe" class="grid grid-cols-1 ${state.sidebarCollapsed ? 'lg:grid-cols-[72px_1fr]' : 'lg:grid-cols-[230px_1fr]'} min-h-screen bg-base-200">
-      <aside class="hidden lg:flex flex-col gap-1 sticky top-0 h-screen ${state.sidebarCollapsed ? 'p-2' : 'p-3'} text-white bg-[#241d2f] shadow-2xl shadow-black/20">
-        <a class="flex items-center justify-center py-4" href="#/dashboard" data-page="dashboard">
-          <span class="grid place-items-center w-11 h-11 rounded-2xl bg-gradient-to-br from-orange-500 to-purple-600 text-2xl shadow-lg">🎲</span>
+    <div data-theme="bgcafe" class="admin-shell ${state.sidebarCollapsed ? 'is-sidebar-collapsed' : ''}">
+      <aside class="admin-sidebar ${state.sidebarCollapsed ? 'is-collapsed' : ''}">
+        <a class="admin-sidebar-brand" href="#/dashboard" data-page="dashboard" title="${escapeAttr(venueName)}">
+          <span class="admin-brand-mark">${renderNavIcon('games')}</span>
+          ${state.sidebarCollapsed ? '' : `<span class="admin-brand-copy"><strong>${escapeHtml(state.venue?.name || '骰子猫')}</strong><small>单店运营系统</small></span>`}
         </a>
-        <nav class="grid gap-1 overflow-y-auto" aria-label="主导航">
+        <nav class="admin-sidebar-nav" aria-label="主导航">
           ${renderNav()}
         </nav>
-        <div class="mt-auto pt-2">
-          <button class="w-full min-h-11 flex items-center justify-center gap-2 py-2 rounded-xl text-white/70 hover:text-white hover:bg-white/10 text-sm transition" data-sidebar-toggle type="button" title="${state.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}">
-            <span>${state.sidebarCollapsed ? '»' : '«'}</span>${state.sidebarCollapsed ? '' : '<span>收起</span>'}
+        <div class="admin-sidebar-footer">
+          <button class="admin-sidebar-toggle" data-sidebar-toggle type="button" title="${state.sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}">
+            <span>${state.sidebarCollapsed ? '»' : '«'}</span>${state.sidebarCollapsed ? '' : '<span>收起侧栏</span>'}
           </button>
-          ${state.sidebarCollapsed ? '' : `<span class="block text-center text-[11px] text-white/40 py-1">● ${escapeHtml(state.health)}</span>`}
+          ${state.sidebarCollapsed ? '' : `<span class="admin-sidebar-health">● ${escapeHtml(state.health)}</span>`}
         </div>
       </aside>
       <main class="min-w-0 flex flex-col" id="page-${escapeAttr(page.id)}">
-        <header class="sticky top-0 z-30 flex items-center justify-between gap-4 px-5 sm:px-7 py-3 min-h-[56px] bg-base-100/85 backdrop-blur-xl border-b border-base-300/60">
+        <header class="admin-topbar">
           <div class="flex items-center gap-3 min-w-0">
             <button class="btn btn-ghost btn-sm btn-circle lg:hidden shrink-0" data-mobile-nav-toggle type="button" aria-label="打开后台菜单">☰</button>
             ${hasOwnHeader ? '' : `<div class="min-w-0"><div class="text-[11px] font-bold uppercase tracking-wider text-base-content/45">${escapeHtml(page.eyebrow)}</div><h1 class="m-0 text-lg font-bold tracking-tight truncate">${escapeHtml(page.title)}</h1></div>`}
           </div>
-          <div class="flex items-center gap-2">
+          <div class="admin-topbar-actions">
             ${state.reservations.filter(r => r.status === 'pending').length > 0 ? `<span class="badge badge-warning badge-sm rounded-full font-semibold">${state.reservations.filter(r => r.status === 'pending').length} 待处理</span>` : ''}
             ${state.openSessions.length > 0 ? `<span class="badge badge-info badge-sm rounded-full font-semibold">${state.openSessions.length} 进行中</span>` : ''}
             <span class="text-sm text-base-content/70 max-w-[120px] truncate">${escapeHtml(state.currentUser.displayName || state.currentUser.username)}</span>
@@ -2427,7 +2437,7 @@ async function render() {
           </div>
         </header>
         ${state.err ? `<div class="notice mx-5 sm:mx-7 mt-4">${escapeHtml(state.err)}</div>` : ''}
-        <div class="px-5 sm:px-7 pb-10 page-enter" data-page-key="${escapeAttr(page.id)}">${pageContent}</div>
+        <div class="admin-page-body page-enter" data-page-key="${escapeAttr(page.id)}">${pageContent}</div>
       </main>
       ${renderMobileNav()}
       ${renderPetWidget()}
