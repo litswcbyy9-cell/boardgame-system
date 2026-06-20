@@ -91,10 +91,10 @@ async function enterAuthenticatedApp() {
 }
 
 function ensureRefreshTimer() {
-  if (refreshTimer) return;
-  refreshTimer = window.setInterval(() => {
-    if (state.currentUser) void refresh();
-  }, 15000);
+  // Auto-refresh caused full-page re-render flicker; keep refresh manual or action-driven.
+  if (!refreshTimer) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
 }
 
 function applyDemoData(errorMessage = '') {
