@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
+    "demo:seed": "node src/seed-presentation.js",
     "test": "vitest run",
     "test:api": "vitest run test/api"
   },
